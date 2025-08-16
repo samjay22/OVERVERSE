@@ -1,14 +1,10 @@
 --!strict
--- Default loadout for testing - individual module approach
-
 local Enums = require(game.ReplicatedStorage.Modules.Types.Enums)
-
--- Export the loadout definition
 return {
-    assetKey = "Default",
+    assetKey = "Beast",
     loadout = {
         primaryAttack = "Default",
-        actives = { Enums.AbilityId.Dash },
+        actives = { Enums.AbilityId.Slam, Enums.AbilityId.Thrust },
         passive = Enums.AbilityId.Keen,
     }
 }

@@ -43,11 +43,19 @@ function StateManager:Set(key: string, value: StateValue): ()
 	local genericEvent = self._eventBus:Get("StateChanged")
 	genericEvent:Fire({key = key, newValue = value, oldValue = oldValue})
 	
-	-- Call registered callbacks
+	-- Call registered callbacks in a batch to reduce overhead
 	local listeners = self._changeListeners[key]
 	if listeners then
-		for _, callback in ipairs(listeners) do
-			task.spawn(callback, value, oldValue)
+		-- Use a single task.spawn for all callbacks to reduce thread overhead
+		if #listeners > 0 then
+			task.spawn(function()
+				for _, callback in ipairs(listeners) do
+					local success, err = pcall(callback, value, oldValue)
+					if not success then
+						warn(`StateManager callback failed: {err}`)
+					end
+				end
+			end)
 		end
 	end
 end
@@ -69,12 +77,17 @@ function StateManager:SetMultiple(states: {[string]: StateValue}): ()
 		local event = self._eventBus:Get(`StateChanged_{key}`)
 		event:Fire(change.new, change.old)
 		
-		-- Call registered callbacks
+		-- Call registered callbacks in batch
 		local listeners = self._changeListeners[key]
-		if listeners then
-			for _, callback in ipairs(listeners) do
-				task.spawn(callback, change.new, change.old)
-			end
+		if listeners and #listeners > 0 then
+			task.spawn(function()
+				for _, callback in ipairs(listeners) do
+					local success, err = pcall(callback, change.new, change.old)
+					if not success then
+						warn(`StateManager batch callback failed: {err}`)
+					end
+				end
+			end)
 		end
 	end
 	

@@ -87,6 +87,12 @@ return {
             default = 0,
             validator = function(v) return type(v) == "number" end,
         },
+
+        -- Input state reported from client (sanitized/used server-side only)
+        ActiveKeys = {
+            default = {},
+            validator = function(v) return type(v) == "table" end,
+        },
     },
 
     REGEN_RATES = {

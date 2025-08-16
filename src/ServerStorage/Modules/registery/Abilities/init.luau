@@ -1,7 +1,7 @@
 --!strict
--- Legacy Ability registry wrapper - delegates to new AbilityRegistry
+-- Legacy Ability registry wrapper - delegates to ImprovedAbilityRegistry
 
-local AbilityRegistry = require(script.AbilityRegistry)
+local ImprovedAbilityRegistry = require(game.ServerStorage.Modules.registery.ImprovedAbilityRegistry)
 
--- Export the new registry with legacy compatibility
-return AbilityRegistry
+-- Export the improved registry with legacy compatibility
+return ImprovedAbilityRegistry

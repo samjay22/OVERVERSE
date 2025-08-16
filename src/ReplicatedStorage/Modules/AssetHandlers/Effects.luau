@@ -5,7 +5,7 @@ local AssetTypes = require(game.ReplicatedStorage.Modules.Types.AssetTypes)
 
 local assetCache : { [string]: AssetTypes.AssetValue } = {}
 local assetIdMap = {
-    Default = "124643087679097",
+    RemAura = "83733500844066",
 }
 
 local function loadAsset(assetName: string): AssetTypes.AssetValue?
@@ -24,19 +24,8 @@ local function loadAsset(assetName: string): AssetTypes.AssetValue?
         if not characterModel then
             error("Failed to load character model for asset: " .. assetName)
         end
-        
-        -- Ensure the character has a Humanoid
-        local humanoid = characterModel:FindFirstChildOfClass("Humanoid")
-        if not humanoid then
-            error("Character model missing Humanoid")
-        end
-        
-        if characterModel:FindFirstChild("Animate") then
-            characterModel.Animate:Destroy()
-        end
-
     
-    return characterModel
+        return characterModel
     end)
 
     if success and result then
@@ -55,7 +44,7 @@ end
 local CharacterAssets = {}
 
 function CharacterAssets.GetHandlerName(): string
-    return "Characters"
+    return "Effects"
 end
 
 function CharacterAssets.GetAllAssets(): { [string]: AssetTypes.AssetValue }

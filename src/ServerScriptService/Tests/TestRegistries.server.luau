@@ -3,7 +3,7 @@
 
 local TestService = game:GetService("TestService")
 
-local AbilityRegistry = require(game.ServerStorage.Modules.registery.Abilities)
+local AbilityRegistry = require(game.ServerStorage.Modules.registery.ImprovedAbilityRegistry)
 local EffectRegistry = require(game.ServerStorage.Modules.registery.Effects)
 local LoadoutRegistry = require(game.ServerStorage.Modules.registery.Loadouts)
 

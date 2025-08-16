@@ -167,7 +167,7 @@ local function runRegistryTests()
     log("INFO", "Loading Registry system tests...")
     
     -- Test that registries can be loaded
-    local AbilityRegistry = require(game.ServerStorage.Modules.registery.Abilities)
+    local AbilityRegistry = require(game.ServerStorage.Modules.registery.ImprovedAbilityRegistry)
     local EffectRegistry = require(game.ServerStorage.Modules.registery.Effects)
     local LoadoutRegistry = require(game.ServerStorage.Modules.registery.Loadouts)
     
@@ -192,7 +192,7 @@ local function runIntegrationTests()
     
     -- Test that core systems can work together
     local Character = require(game.ServerStorage.Modules.Entities.Character)
-    local AbilityRegistry = require(game.ServerStorage.Modules.registery.Abilities)
+    local AbilityRegistry = require(game.ServerStorage.Modules.registery.ImprovedAbilityRegistry)
     
     local characterInstance = Character.New()
     local abilities = AbilityRegistry.GetAll()

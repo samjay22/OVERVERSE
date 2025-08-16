@@ -57,14 +57,14 @@ function StaminaComponent.Update(characterData, dt: number)
         Stamina = {regenRate = 10, depleteRate = 20}
     }
     
-    local stamina = stateManager:Get("Stamina")
-    local maxStamina = stateManager:Get("MaxStamina")
-    local isRunning = stateManager:Get("IsRunning")
-    local isBlocking = stateManager:Get("IsBlocking")
+    local stamina = stateManager:Get("Stamina") :: number
+    local maxStamina = stateManager:Get("MaxStamina") :: number
+    local isRunning = stateManager:Get("IsRunning") :: boolean
+    local isBlocking = stateManager:Get("IsBlocking") :: boolean
     
     local staminaChange = 0
     
-    -- Stamina depletion
+    -- Stamina depletion/regeneration calculations
     if isRunning then
         staminaChange = -dt * regenRates.Stamina.depleteRate
     elseif isBlocking then
@@ -75,9 +75,13 @@ function StaminaComponent.Update(characterData, dt: number)
         staminaChange = dt * regenRates.Stamina.regenRate
     end
     
-    if staminaChange ~= 0 then
+    -- Only update if there's a meaningful change (avoid micro-updates)
+    if math.abs(staminaChange) > 0.01 then
         local newStamina = math.clamp(stamina + staminaChange, 0, maxStamina)
-        stateManager:Set("Stamina", newStamina)
+        -- Only set if the change is significant enough to matter
+        if math.abs(newStamina - stamina) > 0.1 then
+            stateManager:Set("Stamina", newStamina)
+        end
     end
 end
 

@@ -66,6 +66,11 @@ function StateManager:Get(stateName: string)
     return self._states[stateName]
 end
 
+-- Check if a state has been defined (API parity with server StateManager)
+function StateManager:Has(stateName: string): boolean
+    return self._states[stateName] ~= nil
+end
+
 function StateManager:OnStateChange(stateName: string, callback: StateChangeCallback)
     if not self._listeners[stateName] then
         self._listeners[stateName] = {}

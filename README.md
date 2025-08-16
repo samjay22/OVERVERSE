@@ -15,3 +15,8 @@ rojo serve
 ```
 
 For more help, check out [the Rojo documentation](https://rojo.space/docs).
+ 
+## Abilities
+
+Per-ability modules now live on both client and server, returning a minimal AbilityResult (success, reason?, cooldowns?).
+See docs/ABILITY_MODULES.md for the contract and locations.

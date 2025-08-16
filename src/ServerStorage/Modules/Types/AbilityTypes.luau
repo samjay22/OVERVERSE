@@ -5,7 +5,8 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Enums = require(ReplicatedStorage.Modules.Types.Enums)
 
 -- Core ability types
-export type AbilityId = Enums.AbilityId
+-- Use broad string ID to align with registry keys and ease authoring
+export type AbilityId = string
 export type AbilityType = Enums.AbilityType
 export type AbilityTarget = Enums.AbilityTarget
 
@@ -38,10 +39,9 @@ export type AbilityResult = {
 	data: {[string]: any}?,
 }
 
--- Base ability definition
 export type BaseAbilityDef = {
 	id: AbilityId,
-	type: AbilityType,
+	type: string, -- "Active" | "Passive" | "Toggle"
 	name: string,
 	description: string,
 	icon: string?,
@@ -56,7 +56,7 @@ export type BaseAbilityDef = {
 -- Active ability definition
 export type ActiveAbilityDef = BaseAbilityDef & {
 	type: "Active",
-	serverActivate: (context: AbilityContext) -> AbilityResult,
+	-- No serverActivate: client-authoritative with server validation elsewhere
 	clientPreview: ((context: AbilityContext) -> boolean)?,
 	range: number?,
 	radius: number?,
@@ -84,8 +84,42 @@ export type ToggleAbilityDef = BaseAbilityDef & {
 	maxDuration: number?,
 }
 
--- Union type for all ability definitions (simplified to avoid recursion)
-export type AbilityDef = ActiveAbilityDef | PassiveAbilityDef | ToggleAbilityDef
+-- Union type for all ability definitions (improved)
+export type AbilityDef = {
+	-- Base fields (always present)
+	id: AbilityId,
+	type: "Active" | "Passive" | "Toggle",
+	name: string,
+	description: string,
+	targetType: AbilityTarget,
+	cooldown: number?,
+	staminaCost: number?,
+	manaCost: number?,
+	level: number?,
+	tags: {string}?,
+	icon: string?,
+	
+	-- Active fields
+	clientPreview: ((context: AbilityContext) -> boolean)?,
+	range: number?,
+	radius: number?,
+	castTime: number?,
+	channelTime: number?,
+	interruptible: boolean?,
+	
+	-- Passive fields
+	onEquip: ((context: AbilityContext) -> ())?,
+	onUnequip: ((context: AbilityContext) -> ())?,
+	onTick: ((context: AbilityContext, deltaTime: number) -> ())?,
+	modifiers: {[string]: number}?,
+	
+	-- Toggle fields
+	onActivate: ((context: AbilityContext) -> AbilityResult)?,
+	onDeactivate: ((context: AbilityContext) -> AbilityResult)?,
+	staminaPerSecond: number?,
+	manaPerSecond: number?,
+	maxDuration: number?,
+}
 
 -- Simplified ability definition for registry
 export type SimpleAbilityDef = {

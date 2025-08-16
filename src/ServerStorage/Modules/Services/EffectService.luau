@@ -89,7 +89,7 @@ function EffectService:Apply(character: any, effectOrId: EffectDef | EffectId, c
         indexMap[id] = #list
 
         if def.onApply then
-            def.onApply({ player = player, character = character, extra = ctxExtra })
+            def.onApply({ player = player, character = character, extra = ctxExtra } :: any)
         end
 	end
 end
@@ -117,7 +117,7 @@ function EffectService:Remove(character: any, id: EffectId)
     local active: ActiveEffect? = bucket.byId[id]
     if not active then return end
     if active.def.onRemove then
-        active.def.onRemove({ player = player, character = character, extra = active.extra })
+        active.def.onRemove({ player = player, character = character, extra = active.extra } :: any)
     end
 
     self:_swapRemove(playerId, id)
@@ -133,86 +133,79 @@ function EffectService:Tick(character, dt: number)
     local list = self._iterList[playerId]
     if not list or #list == 0 then return end
 
+    local byId = self._effects[playerId].byId
     local player = character.Player
-    if character.StateManager and character.StateManager:Get("IsDead") then
-        return
-    end
-
-    local bucket = self._effects[playerId]
-    if not bucket then return end
-
-    local byId = bucket.byId
     local now = time()
-
-    local toRemove = table.create(#list) :: {EffectId}
+    
+    -- Pre-allocate removal array for better performance
+    local toRemove = table.create(8) :: {EffectId}
     local rc = 0
-
-    -- Reverse numeric for-loop; no in-loop removals (deferred).
-    for i = #list, 1, -1 do
+    
+    -- Single pass through active effects
+    for i = 1, #list do
         local id = list[i]
         local active = byId[id]
-        if active then
+        
+        if not active then
+            rc += 1
+            toRemove[rc] = id
+            continue
+        end
+        
+        -- Check expiration first (fast path)
+        if active.expiresAt and now >= active.expiresAt then
             local def = active.def
-            local expiresAt = active.expiresAt
-            if expiresAt and now >= expiresAt then
-                local onRemove = def.onRemove
-                if onRemove then
-                    local ok, err = pcall(onRemove, { player = player, character = character, extra = active.extra })
-                    if not ok then warn("Effect " .. tostring(id) .. " removal failed: " .. tostring(err)) end
-                end
-                rc += 1
-                toRemove[rc] = id
-            else
-                local onTick = def.onTick
-                if onTick then
-                    -- Optional fixed tick interval per effect
-                    local interval = (def.tickInterval or 0)
-                    if interval > 0 then
-                        active._tickAccum = (active._tickAccum or 0) + dt
-                        while active._tickAccum >= interval do
-                            active._tickAccum -= interval
-                            local ok, err = pcall(onTick, { player = player, character = character, extra = active.extra }, interval, active.stacks)
-                            if not ok then
-                                warn("Effect " .. tostring(id) .. " tick failed: " .. tostring(err))
-                                break
-                            end
+            if def.onRemove then
+                local ok, err = pcall(def.onRemove, { player = player, character = character, extra = active.extra } :: any)
+                if not ok then warn("Effect " .. tostring(id) .. " removal failed: " .. tostring(err)) end
+            end
+            rc += 1
+            toRemove[rc] = id
+        else
+            -- Process tick if effect has onTick
+            local onTick = active.def.onTick
+            if onTick then
+                local interval = (active.def.tickInterval or 0)
+                if interval > 0 then
+                    active._tickAccum = (active._tickAccum or 0) + dt
+                    while active._tickAccum >= interval do
+                        active._tickAccum -= interval
+                        local ok, err = pcall(onTick, { player = player, character = character, extra = active.extra } :: any, interval, active.stacks)
+                        if not ok then
+                            warn("Effect " .. tostring(id) .. " tick failed: " .. tostring(err))
+                            break
                         end
-                    else
-                        -- If the effect will expire within this frame, only apply the remaining fraction of dt
-                        local effDt = dt
-                        if active.expiresAt then
-                            local tprev = now - dt
-                            local remains = active.expiresAt - tprev
-                            if remains < dt then
-                                effDt = math.max(0, remains)
-                            end
+                    end
+                else
+                    -- Calculate effective dt for expiring effects
+                    local effDt = dt
+                    if active.expiresAt then
+                        local tprev = now - dt
+                        local remains = active.expiresAt - tprev
+                        if remains < dt then
+                            effDt = math.max(0, remains)
                         end
-                        if effDt <= 0 then
-                            -- Nothing to apply this frame; let removal happen next iteration
-                        else
-                            local ok, err = pcall(onTick, { player = player, character = character, extra = active.extra }, effDt, active.stacks)
-                            if not ok then warn("Effect " .. tostring(id) .. " tick failed: " .. tostring(err)) end
-                        end
+                    end
+                    if effDt > 0 then
+                        local ok, err = pcall(onTick, { player = player, character = character, extra = active.extra } :: any, effDt, active.stacks)
+                        if not ok then warn("Effect " .. tostring(id) .. " tick failed: " .. tostring(err)) end
                     end
                 end
             end
-        else
-            rc += 1
-            toRemove[rc] = id
         end
     end
 
+    -- Batch remove expired effects using optimized swap-remove
     if rc > 0 then
         local indexMap = self._iterIndex[playerId]
-        -- O(1) swap-remove per id
         for j = 1, rc do
-            local rid = toRemove[j]
+            local rid = toRemove[j] :: any
             local idx = indexMap[rid]
             if idx then
                 local last = #list
                 local lastId = list[last]
                 if lastId then
-                    list[idx] = lastId
+                    list[idx] = lastId :: any
                     indexMap[lastId] = idx
                     list[last] = nil
                 end

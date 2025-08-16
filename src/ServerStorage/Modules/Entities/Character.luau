@@ -1,5 +1,6 @@
 --!nonstrict
 -- Character Manager - Handles all character-related functionality
+-- TODO: Convert to strict mode after resolving type compatibility issues
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerStorage = game:GetService("ServerStorage")
@@ -7,6 +8,13 @@ local CharacterAdded = Instance.new("BindableEvent")
 local CollectionService = game:GetService("CollectionService")
 
 local CharacterTypes = require(ServerStorage.Modules.Types.CharacterTypes)
+local CharacterRegistry: any = nil
+do
+    local ok, mod = pcall(function()
+        return require((game.ServerStorage.Modules.registery :: any).Characters)
+    end)
+    if ok then CharacterRegistry = mod end
+end
 
 type internalCharacter = CharacterTypes.internalCharacter
 type CharacterConfig = CharacterTypes.CharacterConfig
@@ -15,9 +23,9 @@ type CharacterData = CharacterTypes.Character
 
 -- Dependencies
 local Constants = require(ReplicatedStorage.Modules.Utility.Constants)
-local WeldUtility = require(ServerStorage.Modules.Utilities.WeldUtility)
+local _WeldUtility = require(ServerStorage.Modules.Utilities.WeldUtility)
 local StateManager = require(ReplicatedStorage.Modules.Utility.StateManager)
-local WeaponUtility = require(ServerStorage.Modules.Utilities.WeaponUtility)
+local _WeaponUtility = require(ServerStorage.Modules.Utilities.WeaponUtility)
 local CharacterStates = require(ServerStorage.Modules.Utilities.CharacterStates)
 local UpdateScheduler = require(ServerStorage.Modules.Utilities.UpdateScheduler)
 local AbilityLoadouts = require(ServerStorage.Modules.registery.Loadouts)
@@ -65,7 +73,7 @@ function Character.New()
     -- Fast int-indexed iteration structures for active characters
     self._activeList = {} :: {number} -- array of playerIds
     self._activeIndex = {} :: {[number]: number} -- playerId -> index
-    self.Components = {} :: {[string]: ComponentInterface}
+    self.Components = {} :: {[string]: any}
     self._updaters = {} :: { {name: string, fn: (any, number) -> ()} }
     self.StateDefinitions = {}
     
@@ -79,6 +87,7 @@ function Character.New()
     -- Event connections
     self._connections = {}
     self._updateAccumulator = 0
+    self._scheduler = nil :: any
     
     self:_Initialize()
     return self
@@ -101,6 +110,13 @@ function Character:_LoadCyclicComponents()
         else
             warn("Failed to load WeaponComponent:", WeaponComponent)
         end
+
+        local success3, InputComponent = pcall(require, game.ServerStorage.Modules.Components.InputComponent)
+        if success3 then
+            self:RegisterComponent("Input", InputComponent)
+        else
+            warn("Failed to load InputComponent:", InputComponent)
+        end
     end)
 end
  
@@ -119,17 +135,22 @@ function Character:_Initialize()
     -- Load state definitions
     self:_LoadStateDefinitions()
     
-    -- Register built-in components (remove cyclic dependencies)
-    self:RegisterComponent("Health", require(game.ServerStorage.Modules.Components.HealthComponent))
-    self:RegisterComponent("Stamina", require(game.ServerStorage.Modules.Components.StaminaComponent))
-    self:RegisterComponent("Movement", require(game.ServerStorage.Modules.Components.MovementComponent))
-    self:RegisterComponent("Combat", require(game.ServerStorage.Modules.Components.CombatComponent))
-    -- Note: AbilityComponent and WeaponComponent will be loaded later to avoid cycles
-    self:RegisterComponent("Effect", require(game.ServerStorage.Modules.Components.EffectComponent))
+    -- Register built-in components with proper typing
+    local HealthComponent = require(game.ServerStorage.Modules.Components.HealthComponent)
+    local StaminaComponent = require(game.ServerStorage.Modules.Components.StaminaComponent)
+    local MovementComponent = require(game.ServerStorage.Modules.Components.MovementComponent)
+    local CombatComponent = require(game.ServerStorage.Modules.Components.CombatComponent)
+    local EffectComponent = require(game.ServerStorage.Modules.Components.EffectComponent)
+    
+    self:RegisterComponent("Health", HealthComponent :: any)
+    self:RegisterComponent("Stamina", StaminaComponent :: any)
+    self:RegisterComponent("Movement", MovementComponent :: any)
+    self:RegisterComponent("Combat", CombatComponent :: any)
+    self:RegisterComponent("Effect", EffectComponent :: any)
 
     -- Initialize registries (abilities / effects) using new registry system
-    local AbilityRegistry = require(game.ServerStorage.Modules.registery.Abilities.AbilityRegistry)
-    local abilityCount: number = AbilityRegistry.Count()
+    local ImprovedAbilityRegistry = require(game.ServerStorage.Modules.registery.ImprovedAbilityRegistry)
+    local abilityCount: number = ImprovedAbilityRegistry.Count()
     print("Ability registry loaded with", abilityCount, "abilities")
 
     -- Effects registry
@@ -165,7 +186,7 @@ function Character:_LoadStateDefinitions()
     self.StateDefinitions = CharacterStates.GetDefinitions()
 end
 
-function Character:RegisterComponent(name: string, component: ComponentInterface)
+function Character:RegisterComponent(name: string, component)
     if self.Components[name] then
         warn(`Component {name} already registered, overwriting`)
     end
@@ -198,6 +219,13 @@ function Character:SpawnCharacter(player: Player, config: CharacterConfig?): Cha
     -- Clean up existing character
     self:CleanupCharacter(player)
     
+    -- Resolve character class definition
+    local classId: CharacterTypes.CharacterClassId = (config and config.ClassId) or (player:GetAttribute("ClassId") :: any) or "Default"
+    local classDef = nil
+    if CharacterRegistry and CharacterRegistry.Get then
+        classDef = CharacterRegistry.Get(classId)
+    end
+    
     -- Create character model (but don't put it in workspace yet)
     local characterModel = self:_CreateCharacterModel(player, config, false) -- false = don't parent to workspace
     if not characterModel then
@@ -207,32 +235,50 @@ function Character:SpawnCharacter(player: Player, config: CharacterConfig?): Cha
     -- Call OnCharacterCreation hook before the character is put in workspace
     -- This allows modification of the character model (weapons, animations, etc.)
     if self.OnCharacterCreation then
-        local success, err = pcall(self.OnCharacterCreation, player, characterModel, config)
-        if not success then
-            warn(`OnCharacterCreation hook failed for {player.Name}: {err}`)
+        local okHook = pcall(self.OnCharacterCreation, player, characterModel, config)
+        if not okHook then
+            warn(`OnCharacterCreation hook failed for {player.Name}`)
         end
     end
 
-    local characterAnimationsFolder : Folder = Instance.new("Folder")
+    -- Create and tag animations folder, then populate from class pack or Default
+    local characterAnimationsFolder: Folder = Instance.new("Folder")
     characterAnimationsFolder.Name = "Animations"
     characterAnimationsFolder.Parent = characterModel
-    CollectionService:AddTag(characterAnimationsFolder, tostring(player.UserId) .. "_Animations")
+    local animTag = tostring(player.UserId) .. "_Animations"
+    CollectionService:AddTag(characterAnimationsFolder, animTag)
 
-    local walk : AnimationClip =  AnimationAssets.GetAsset("RemWalk").Instance
-    local idle : AnimationClip = AnimationAssets.GetAsset("RemIdle").Instance
-    
-    walk.Name = "Walk"
-    idle.Name = "Idle"
-    
-    walk.Parent = characterAnimationsFolder
-    idle.Parent = characterAnimationsFolder
+    -- Determine animation pack
+    local packName = (classDef and classDef.animationPack) or "Default"
+    do
+        local handler: any = AnimationAssets
+        local idleVal: any
+        local walkVal: any
+        if handler and handler.GetClip then
+            idleVal = handler.GetClip(packName, "Idle")
+            walkVal = handler.GetClip(packName, "Walk")
+        elseif handler and handler.GetAsset then
+            idleVal = handler.GetAsset(packName .. ":" .. "Idle")
+            walkVal = handler.GetAsset(packName .. ":" .. "Walk")
+        end
+        if idleVal and idleVal.Instance and idleVal.Instance:IsA("Animation") then
+            local idle: Animation = idleVal.Instance :: Animation
+            local idleClone = idle:Clone()
+            idleClone.Name = "Idle"
+            idleClone.Parent = characterAnimationsFolder
+        end
+        if walkVal and walkVal.Instance and walkVal.Instance:IsA("Animation") then
+            local walk: Animation = walkVal.Instance :: Animation
+            local walkClone = walk:Clone()
+            walkClone.Name = "Walk"
+            walkClone.Parent = characterAnimationsFolder
+        end
+    end
 
     -- Now put the character in the workspace
     characterModel.Parent = workspace
     
-    NetworkServer:FireClient("StartCharacterAnimation", player, {
-        "Idle"
-    })
+    NetworkServer:FireClient("StartCharacterAnimation", player, { "Idle" })
     
     -- Create character data
     local characterData = self:_CreateCharacterData(player, characterModel, config)
@@ -240,7 +286,27 @@ function Character:SpawnCharacter(player: Player, config: CharacterConfig?): Cha
         characterModel:Destroy()
         return nil
     end
+    -- Attach class information and custom fields
+    characterData.Definition = classDef
+    characterData.ClassId = classId
+    characterData.Custom = {}
+    if classDef and classDef.customFields then
+        for k, v in pairs(classDef.customFields) do
+            (characterData.Custom :: any)[k] = v
+        end
+    end
+    if config and (config :: any).Custom then
+        for k, v in pairs((config :: any).Custom) do
+            (characterData.Custom :: any)[k] = v
+        end
+    end
     
+    -- Run class onInit hook before components
+    if classDef and classDef.hooks and classDef.hooks.onInit then
+        local okInit, errInit = pcall(classDef.hooks.onInit, characterData)
+        if not okInit then warn("Class onInit failed:", errInit) end
+    end
+
     -- Initialize components
     for componentName, component in pairs(self.Components) do
         if component.Initialize then
@@ -256,9 +322,9 @@ function Character:SpawnCharacter(player: Player, config: CharacterConfig?): Cha
             end
 
             -- Initialize component with character data and config
-            local success, err = pcall(component.Initialize, characterData, cfg)
-            if not success then
-                warn(`Failed to initialize component {componentName}: {err}`)
+            local okInitComp = pcall(component.Initialize, characterData, cfg)
+            if not okInitComp then
+                warn(`Failed to initialize component {componentName}`)
             end
         end
     end
@@ -364,6 +430,11 @@ function Character:_CreateCharacterData(player: Player, characterModel: Model, c
         OnCleanup = Instance.new("BindableEvent"),
     }
     
+    local sheathInst = characterModel:FindFirstChild("WeaponSheath")
+    local sheathPart: BasePart? = nil
+    if sheathInst and sheathInst:IsA("BasePart") then
+        sheathPart = sheathInst
+    end
     local characterData: internalCharacter = {
         PlayerId = player.UserId,
         Player = player,
@@ -371,7 +442,7 @@ function Character:_CreateCharacterData(player: Player, characterModel: Model, c
         Humanoid = humanoid,
         -- Route state changes into the OnStateChange event
         StateManager = StateManager.New(signals.OnStateChange),
-        WeaponSheath = characterModel:FindFirstChild("WeaponSheath"),
+        WeaponSheath = sheathPart,
         Components = {},
         -- Expose signals at root for type compatibility and under Signals for convenience
         OnSpawn = signals.OnSpawn,
@@ -387,7 +458,9 @@ function Character:_CreateCharacterData(player: Player, characterModel: Model, c
         _connections = {},
         _cleanupTasks = {},
         _lastUpdate = time(),
-        Animations = CollectionService:GetTagged( tostring(player.UserId) .. "_Animations")
+    Animations = characterModel:FindFirstChild("Animations"),
+        Definition = nil,
+        Custom = {},
     }
     
     -- Initialize state manager
@@ -407,6 +480,27 @@ function Character:_CreateCharacterData(player: Player, characterModel: Model, c
     characterData.StateManager:OnStateChange("Guard", function(newVal, oldVal)
         characterData.Signals.OnGuardChange:Fire(newVal, oldVal)
     end)
+
+    -- Hook ShiftState to swap ability loadouts between Human and Beast forms
+    characterData.StateManager:OnStateChange("ShiftState", function(newVal: any, _oldVal: any)
+        local AbilityComponentMod = self.Components["Ability"]
+        if not AbilityComponentMod or not AbilityComponentMod.SetLoadout then return end
+        local form: string = tostring(newVal)
+        -- Choose loadout assetKey per form; fallback to Default
+        local assetKey = (form == "Beast") and "Beast" or ((form == "Human") and "Human" or Constants.CHARACTER_ASSET_DEFAULT)
+        local loadout = AbilityLoadouts.Get(assetKey)
+        AbilityComponentMod.SetLoadout(characterData, loadout)
+    end)
+
+    -- Apply initial loadout based on current ShiftState (deferred to allow AbilityComponent to register)
+    task.defer(function()
+        local AbilityComponentMod = self.Components["Ability"]
+        if not AbilityComponentMod or not AbilityComponentMod.SetLoadout then return end
+        local currentForm = characterData.StateManager:Get("ShiftState") or "Human"
+        local assetKey = (currentForm == "Beast") and "Beast" or ((currentForm == "Human") and "Human" or Constants.CHARACTER_ASSET_DEFAULT)
+        local loadout = AbilityLoadouts.Get(assetKey)
+        AbilityComponentMod.SetLoadout(characterData, loadout)
+    end)
     
     return characterData
 end
@@ -416,6 +510,17 @@ function Character:_InitializeStateManager(characterData: internalCharacter, con
     
     -- Define states
     CharacterStates.applyTo(stateManager, self.StateDefinitions)
+    -- Apply character-class initial states if any
+    local def = characterData.Definition
+    if def and def.initialStates then
+        for stateName, v in pairs(def.initialStates :: any) do
+            if typeof(v) == "table" and (v :: any).default ~= nil then
+                stateManager:DefineState(stateName, (v :: any).default, (v :: any).validator)
+            else
+                stateManager:DefineState(stateName, v, nil)
+            end
+        end
+    end
 
     -- Debug: stateManager:GetAllStates() can be printed when needed
     
@@ -454,12 +559,18 @@ function Character:CleanupCharacter(player: Player)
     
     if not characterData then return end
     
+    -- Class onCleanup hook
+    local characterDataForHook = self.CharacterRegistry[playerId]
+    if characterDataForHook and characterDataForHook.Definition and characterDataForHook.Definition.hooks and characterDataForHook.Definition.hooks.onCleanup then
+        pcall(characterDataForHook.Definition.hooks.onCleanup, characterDataForHook)
+    end
+
     -- Cleanup components
     for componentName, component in pairs(self.Components) do
         if component.Cleanup then
-            local success, err = pcall(component.Cleanup, characterData)
-            if not success then
-                warn(`Failed to cleanup component {componentName}: {err}`)
+            local okCleanup = pcall(component.Cleanup, characterData)
+            if not okCleanup then
+                warn(`Failed to cleanup component {componentName}`)
             end
         end
     end
@@ -475,9 +586,9 @@ function Character:CleanupCharacter(player: Player)
     for _, cleanupTask in pairs(characterData._cleanupTasks) do
         if typeof(cleanupTask) == "function" then
             task.defer(function()
-                local success, err = pcall(cleanupTask)
-                if not success then
-                    warn(`Cleanup task failed: {err}`)
+                local okTask = pcall(cleanupTask)
+                if not okTask then
+                    warn("Cleanup task failed")
                 end
             end)
         end
@@ -517,10 +628,14 @@ function Character:HandleCharacterDeath(player: Player)
     
     -- Remove from active characters
     self.ActiveCharacters[player.UserId] = nil
-    local animFolder : Folder = CollectionService:GetTagged( tostring(player.UserId) .. "_Animations")
-    if animFolder then
-        CollectionService:RemoveTag(animFolder,  tostring(player.UserId) .. "_Animations")
-        animFolder:Destroy()
+    local tagged = CollectionService:GetTagged(tostring(player.UserId) .. "_Animations")
+    if tagged and #tagged > 0 then
+        for _, inst in ipairs(tagged) do
+            pcall(function()
+                CollectionService:RemoveTag(inst, tostring(player.UserId) .. "_Animations")
+                inst:Destroy()
+            end)
+        end
     end
     
     -- Schedule respawn if enabled
@@ -570,6 +685,13 @@ function Character:_UpdateCharacters(dt: number)
                 self.ActiveCharacters[playerId] = nil
             end
             continue
+        end
+
+        -- Class onUpdate hook
+        local def = characterData.Definition
+        if def and def.hooks and def.hooks.onUpdate then
+            local okH, errH = pcall(def.hooks.onUpdate, characterData, dt)
+            if not okH then warn("Class onUpdate failed:", errH) end
         end
 
         -- Update components (fixed numeric list, pcall isolation)
@@ -630,11 +752,13 @@ function Character:_StartUpdateLoop()
 end
 
 function Character:_GetCharacterAsset(): Model?
-    if CharacterAssets and CharacterAssets.GetAsset then
-        local asset = CharacterAssets.GetAsset("Default")
-        return asset and asset.Instance or asset
-    elseif CharacterAssets and CharacterAssets.GetRandomAsset then
-        return CharacterAssets:GetRandomAsset()
+    local handler: any = CharacterAssets
+    if handler and handler.GetAsset then
+        local val = handler.GetAsset("Default")
+        local inst = val and val.Instance
+        if inst and inst:IsA("Model") then
+            return inst
+        end
     end
     return nil
 end
@@ -750,6 +874,21 @@ end
 
 function Character:GetAbilityComponent()
     return self.Components["Ability"]
+end
+
+-- Special actions
+function Character:ShiftCharacter(player: Player, newState: string?): boolean
+    local data = self.CharacterRegistry[player.UserId]
+    if not data then return false end
+    local current = data.StateManager:Get("ShiftState")
+    local nextState = newState or ((current == "Human") and "Beast" or "Human")
+    local ok = data.StateManager:Set("ShiftState", nextState)
+    if ok ~= false then
+        data.Custom = data.Custom or {}
+        data.Custom.LastShiftTime = time()
+        return true
+    end
+    return false
 end
 
 function Character:Destroy()

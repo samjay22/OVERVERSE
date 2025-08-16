@@ -43,6 +43,7 @@ export type ComponentManager = {
 export type ServiceDefinition<T> = {
 	id: ServiceId,
 	data: T,
+	dependencies: {ServiceId}?,
 	initialize: ((any) -> ())?,
 	start: ((any) -> ())?,
 	stop: ((any) -> ())?,

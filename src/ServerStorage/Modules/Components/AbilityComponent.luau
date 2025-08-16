@@ -3,7 +3,7 @@
 
 local AbilityService = require(game.ServerStorage.Modules.Services.AbilityService)
 local AbilityTypes = require(game.ServerStorage.Modules.Types.AbilityTypes)
-local AbilityRegistry = require(game.ServerStorage.Modules.registery.Abilities)
+local ImprovedAbilityRegistry = require(game.ServerStorage.Modules.registery.ImprovedAbilityRegistry)
 
 local _service = AbilityService.New()
 
@@ -26,8 +26,32 @@ function AbilityComponent.PrimaryAttack(player: Player, attackType: string?): bo
     return _service:PrimaryAttack(player, attackType)
 end
 
-function AbilityComponent.GetRegistry(): typeof(AbilityRegistry)
-    return AbilityRegistry
+function AbilityComponent.M1(player: Player, attackType: string?): boolean
+    return (_service :: any):M1(player, attackType)
+end
+
+function AbilityComponent.M2(player: Player, isDown: boolean): boolean
+    return (_service :: any):M2(player, isDown)
+end
+
+function AbilityComponent.GetRegistry(): typeof(ImprovedAbilityRegistry)
+    return ImprovedAbilityRegistry
+end
+
+function AbilityComponent.GetLoadout(playerId: number)
+    return (_service :: any):GetLoadout(playerId)
+end
+
+function AbilityComponent.SetLoadout(characterData: AbilityTypes.CharacterRef, loadout: AbilityTypes.Loadout)
+    (_service :: any):SetLoadout(characterData, loadout)
+end
+
+function AbilityComponent.HandleInput(player: Player, action: string, isDown: boolean, meta: {[string]: any}?)
+    return (_service :: any):HandleInput(player, action, isDown, meta)
+end
+
+function AbilityComponent.RemapBinding(player: Player, binding: string, abilityId: string?)
+    return (_service :: any):RemapBinding(player, binding, abilityId)
 end
 
 return AbilityComponent

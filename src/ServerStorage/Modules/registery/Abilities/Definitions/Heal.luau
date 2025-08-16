@@ -10,7 +10,7 @@ local HEAL_COOLDOWN: number = 8 -- seconds
 local HEAL_STAMINA_COST: number = 20
 local HEAL_RANGE: number = 10 -- studs
 
-local function performHeal(context: AbilityTypes.AbilityContext): AbilityTypes.AbilityResult
+local function _performHeal(context: AbilityTypes.AbilityContext): AbilityTypes.AbilityResult
 	local character: AbilityTypes.CharacterRef = context.character
 	if not character.Character or not character.Humanoid then
 		return {
@@ -64,7 +64,6 @@ return {
 	cooldown = HEAL_COOLDOWN,
 	staminaCost = HEAL_STAMINA_COST,
 	range = HEAL_RANGE,
-	castTime = 1,
+	castTime = 2,
 	interruptible = true,
-	serverActivate = performHeal,
 }
