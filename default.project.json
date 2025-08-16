@@ -1,0 +1,102 @@
+{
+  "name": "Roblox",
+  "tree": {
+    "$className": "DataModel",
+
+    "ReplicatedStorage": {
+      "$path": "src/ReplicatedStorage",
+      "$className": "ReplicatedStorage"
+    },
+
+    "ReplicatedFirst": {
+      "$path": "src/ReplicatedFirst",
+      "$className": "ReplicatedFirst"
+    },
+
+    "ServerScriptService": {
+      "$path": "src/ServerScriptService",
+      "$className": "ServerScriptService"
+    },
+
+    "ServerStorage": {
+      "$path": "src/ServerStorage",
+      "$className": "ServerStorage"
+    },
+
+    "StarterGui": {
+      "$path": "src/StarterGui",
+      "$className": "StarterGui"
+    },
+
+    "StarterPack": {
+      "$path": "src/StarterPack",
+      "$className": "StarterPack"
+    },
+
+    "StarterPlayer": {
+      "$path": "src/StarterPlayer",
+      "$className": "StarterPlayer",
+      "StarterPlayerScripts": {
+        "$path": "src/StarterPlayerScripts",
+        "$className": "StarterPlayerScripts"
+      },
+      "StarterCharacterScripts": {
+        "$path": "src/StarterCharacterScripts",
+        "$className": "StarterCharacterScripts"
+      }
+    },
+
+    "Teams": {
+      "$path": "src/Teams",
+      "$className": "Teams"
+    },
+    "Workspace": {
+      "$path": "src/Workspace",
+      "$className": "Workspace",
+      "$ignoreUnknownInstances": true,
+      "$properties": {
+        "AllowThirdPartySales": true,
+        "StreamingEnabled": true,
+        "StreamingMinRadius": 500,
+        "StreamingTargetRadius": 2000,
+        "StreamingPauseMode": "Disabled"
+      },
+      "Terrain": {
+        "$className": "Terrain"
+      },
+      "Camera": {
+        "$className": "Camera"
+      }
+    },
+    "Chat": {
+      "$path": "src/Chat",
+      "$className": "Chat"
+    },
+
+    "TestService" : {
+      "$path": "src/TestService",
+      "$className": "TestService",
+      "$ignoreUnknownInstances": true
+    },
+
+    "Lighting": {
+      "$path": "src/Lighting",
+      "$className": "Lighting",
+      "$properties": {
+        "Ambient": [0, 0, 0],
+        "Brightness": 2,
+        "GlobalShadows": true,
+        "Outlines": false,
+        "Technology": "Voxel"
+      }
+    },
+
+    "SoundService": {
+      "$path": "src/SoundService",
+      "$className": "SoundService",
+      "$properties": {
+        "RespectFilteringEnabled": true
+      }
+    }
+  }
+}
