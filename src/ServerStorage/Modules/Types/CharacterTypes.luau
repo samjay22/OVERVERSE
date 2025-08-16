@@ -43,6 +43,13 @@ export type internalCharacter = Character & {
 
     StateManager: typeof(StateManager.New()),
     Components: {[string]: any},
+
+    Animations : {
+        Idle : Animation?,
+        Primary : Animation?,
+        Secondary : Animation?,
+        Walk : Animation?
+    } & Instance
 }
 
 export type CharacterConfig = {

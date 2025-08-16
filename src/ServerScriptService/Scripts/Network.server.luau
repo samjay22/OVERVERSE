@@ -25,4 +25,7 @@ CoreEvent.OnServerEvent:Connect(function(player: Player, msg)
 	end
 end)
 
-print("Legacy network server loaded with new NetworkServer integration")
+_NetworkServer:RegisterRemoteEvent("StartCharacterAnimation").OnServerEvent:Connect(function(p)
+	warn(p, "tried to start character animation without server-side support")
+	error("Not supported")
+end)

@@ -4,6 +4,7 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerStorage = game:GetService("ServerStorage")
 local CharacterAdded = Instance.new("BindableEvent")
+local CollectionService = game:GetService("CollectionService")
 
 local CharacterTypes = require(ServerStorage.Modules.Types.CharacterTypes)
 
@@ -19,8 +20,13 @@ local StateManager = require(ReplicatedStorage.Modules.Utility.StateManager)
 local WeaponUtility = require(ServerStorage.Modules.Utilities.WeaponUtility)
 local CharacterStates = require(ServerStorage.Modules.Utilities.CharacterStates)
 local UpdateScheduler = require(ServerStorage.Modules.Utilities.UpdateScheduler)
-local CharacterAssets = require(ReplicatedStorage.Modules.AssetHandlers).OnModuleLoaded("Characters")
 local AbilityLoadouts = require(ServerStorage.Modules.registery.Loadouts)
+local NetworkServer = require(ServerStorage.Modules.Core.NetworkServer)
+
+
+
+local CharacterAssets = require(ReplicatedStorage.Modules.AssetHandlers).OnModuleLoaded("Characters")
+local AnimationAssets = require(ReplicatedStorage.Modules.AssetHandlers).OnModuleLoaded("Animations")
 
 -- Character Manager Class
 local Character = {}
@@ -206,9 +212,27 @@ function Character:SpawnCharacter(player: Player, config: CharacterConfig?): Cha
             warn(`OnCharacterCreation hook failed for {player.Name}: {err}`)
         end
     end
+
+    local characterAnimationsFolder : Folder = Instance.new("Folder")
+    characterAnimationsFolder.Name = "Animations"
+    characterAnimationsFolder.Parent = characterModel
+    CollectionService:AddTag(characterAnimationsFolder, tostring(player.UserId) .. "_Animations")
+
+    local walk : AnimationClip =  AnimationAssets.GetAsset("RemWalk").Instance
+    local idle : AnimationClip = AnimationAssets.GetAsset("RemIdle").Instance
     
+    walk.Name = "Walk"
+    idle.Name = "Idle"
+    
+    walk.Parent = characterAnimationsFolder
+    idle.Parent = characterAnimationsFolder
+
     -- Now put the character in the workspace
     characterModel.Parent = workspace
+    
+    NetworkServer:FireClient("StartCharacterAnimation", player, {
+        "Idle"
+    })
     
     -- Create character data
     local characterData = self:_CreateCharacterData(player, characterModel, config)
@@ -291,9 +315,6 @@ function Character:_CreateCharacterModel(player: Player, config: CharacterConfig
     humanoid.Health = maxHealth
     humanoid.WalkSpeed = (config and config.WalkSpeed) or 16
     
-    -- Create weapon sheath
-    self:_CreateWeaponSheath(characterModel)
-    
     -- Set player character
     player.Character = characterModel
     local primary: BasePart? = characterModel.PrimaryPart or characterModel:FindFirstChild("HumanoidRootPart") :: BasePart?
@@ -342,7 +363,7 @@ function Character:_CreateCharacterData(player: Player, characterModel: Model, c
         OnStateChange = Instance.new("BindableEvent"),
         OnCleanup = Instance.new("BindableEvent"),
     }
-
+    
     local characterData: internalCharacter = {
         PlayerId = player.UserId,
         Player = player,
@@ -366,6 +387,7 @@ function Character:_CreateCharacterData(player: Player, characterModel: Model, c
         _connections = {},
         _cleanupTasks = {},
         _lastUpdate = time(),
+        Animations = CollectionService:GetTagged( tostring(player.UserId) .. "_Animations")
     }
     
     -- Initialize state manager
@@ -495,6 +517,11 @@ function Character:HandleCharacterDeath(player: Player)
     
     -- Remove from active characters
     self.ActiveCharacters[player.UserId] = nil
+    local animFolder : Folder = CollectionService:GetTagged( tostring(player.UserId) .. "_Animations")
+    if animFolder then
+        CollectionService:RemoveTag(animFolder,  tostring(player.UserId) .. "_Animations")
+        animFolder:Destroy()
+    end
     
     -- Schedule respawn if enabled
     if self.Config.EnableAutoRespawn then
@@ -610,25 +637,6 @@ function Character:_GetCharacterAsset(): Model?
         return CharacterAssets:GetRandomAsset()
     end
     return nil
-end
-
-function Character:_CreateWeaponSheath(characterModel: Model)
-    local sheathPart = Instance.new("Part")
-    sheathPart.Name = "WeaponSheath"
-    sheathPart.Size = Vector3.new(1, 1, 1)
-    sheathPart.CanCollide = false
-    sheathPart.Massless = true
-    sheathPart.Transparency = 1
-    sheathPart.Parent = characterModel
-    
-    local rootPart = characterModel:WaitForChild("HumanoidRootPart")
-    if WeldUtility and WeldUtility.WeldParts then
-        WeldUtility.WeldParts(rootPart, sheathPart, CFrame.new(0, 0, 0.75))
-    end
-    
-    if WeaponUtility and WeaponUtility.AttachWeaponToCharacter then
-        WeaponUtility.AttachWeaponToCharacter(characterModel, sheathPart)
-    end
 end
 
 -- Public API

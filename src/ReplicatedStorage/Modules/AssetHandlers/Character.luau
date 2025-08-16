@@ -1,12 +1,11 @@
 --!nonstrict
 local InsertService = game:GetService("InsertService")
 
-local Constants = require(game.ReplicatedStorage.Modules.Utility.Constants)
 local AssetTypes = require(game.ReplicatedStorage.Modules.Types.AssetTypes)
 
 local assetCache : { [string]: AssetTypes.AssetValue } = {}
 local assetIdMap = {
-    Default = "88561176485826",
+    Default = "124643087679097",
 }
 
 local function wrapper(characterModel, robloxAnimationScript)
@@ -15,11 +14,8 @@ local function wrapper(characterModel, robloxAnimationScript)
                     local clone : Instance = characterModel:Clone()
                     clone.AncestryChanged:Connect(function(_, parent)
                         if parent == game.Workspace then
-                            local Animate = robloxAnimationScript:Clone()
-                            Animate.Parent = game.ReplicatedStorage
-
                             --need to force script load on client
-                            game.ReplicatedStorage.Remotes.CoreEvent:FireClient(game.Players:FindFirstChild(clone.Name), "StartBaseAnimations", Animate)
+                            game.ReplicatedStorage.Remotes.CoreEvent:FireClient(game.Players:FindFirstChild(clone.Name), "StartBaseAnimations")
                         end
                     end)
                     return clone
@@ -40,7 +36,6 @@ local function loadAsset(assetName: string): AssetTypes.AssetValue?
 
     -- Lazy load the actual Roblox asset
     local success, result = pcall(function()
-        local robloxAnimationScript = InsertService:LoadAsset(Constants.ROBLOX_ANIMATION_SCRIPT):GetChildren()[1]
         local characterModel = InsertService:LoadAsset(tonumber(assetId)):GetChildren()[1] -- Assuming the asset is a single model
         if not characterModel then
             error("Failed to load character model for asset: " .. assetName)
@@ -56,18 +51,8 @@ local function loadAsset(assetName: string): AssetTypes.AssetValue?
             characterModel.Animate:Destroy()
         end
 
-        -- If it's a LocalScript, it won't run on the server
-        -- Check if the script needs to be enabled
-        if robloxAnimationScript:IsA("Script") then
-            robloxAnimationScript.Enabled = false
-        end
-        
-        -- Some animation scripts look for a specific named value
-        if robloxAnimationScript:FindFirstChild("Character") then
-            robloxAnimationScript.Character.Value = characterModel
-        end
-
-        return wrapper(characterModel, robloxAnimationScript)
+    
+        return wrapper(characterModel)
     end)
 
     if success and result then
