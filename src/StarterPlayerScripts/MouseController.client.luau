@@ -6,6 +6,11 @@
 	@author: GitHub Copilot
 	@version: 2.0.0
 ]]
+local Players = game:GetService("Players")
+local HTTPService = game:GetService("HttpService")
+local CollectionService = game:GetService("CollectionService")
+
+local targetKey = HTTPService:GenerateGUID()
 
 --// Modules \\--
 local MouseTargetController = require(game.ReplicatedStorage.Modules.Utility.MouseTargetController)
@@ -22,9 +27,13 @@ local mouseController = MouseTargetController.new(config)
 
 --// Set up target change callback \\--
 mouseController:onTargetChanged(function(newTarget: Model?, oldTarget: Model?)
-	-- Handle target changes here
-	-- This replaces the direct currentTargetValue.Value access pattern
-	-- Other scripts can now listen to this controller or access getCurrentTarget()
+	if oldTarget then 
+		CollectionService:RemoveTag(oldTarget, targetKey)
+	end
+
+	if newTarget then
+		CollectionService:AddTag(newTarget, targetKey)
+	end
 end)
 
 --// Start the targeting system \\--
@@ -34,3 +43,4 @@ mouseController:start()
 -- You can access the current target via: mouseController:getCurrentTarget()
 -- Or register callbacks via: mouseController:onTargetChanged(callback)
 _G.MouseTargetController = mouseController
+Players.LocalPlayer:SetAttribute("targetKey", targetKey)

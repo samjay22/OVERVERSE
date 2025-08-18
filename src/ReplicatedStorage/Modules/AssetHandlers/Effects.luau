@@ -4,9 +4,9 @@ local InsertService = game:GetService("InsertService")
 local AssetTypes = require(game.ReplicatedStorage.Modules.Types.AssetTypes)
 
 local assetCache : { [string]: AssetTypes.AssetValue } = {}
-local assetIdMap = {
+local assetIdMap : {[string] : {[string] : number}} = {
     Rem = {
-        Heal = 100848112721839,
+        M1 = 100848112721839,
         Aura = 83733500844066
     }
 }
@@ -16,14 +16,28 @@ local function loadAsset(assetName: string): AssetTypes.AssetValue?
         return assetCache[assetName]
     end
 
-    local assetId = assetIdMap[assetName]
+    -- Parse the assetName format "Character:AbilityName"
+    local parts = assetName:split(":")
+    if #parts ~= 2 then
+        return nil
+    end
+    
+    local charName = parts[1]
+    local abilityName = parts[2]
+    
+    local charAssets = assetIdMap[charName]
+    if not charAssets then
+        return nil
+    end
+    
+    local assetId = charAssets[abilityName]
     if not assetId then
         return nil
     end
 
     -- Lazy load the actual Roblox asset
     local success, result = pcall(function()
-        local characterModel = InsertService:LoadAsset(tonumber(assetId)):GetChildren()[1] -- Assuming the asset is a single model
+        local characterModel = InsertService:LoadAsset(assetId):GetChildren()[1] -- Assuming the asset is a single model
         if not characterModel then
             error("Failed to load character model for asset: " .. assetName)
         end
@@ -33,7 +47,7 @@ local function loadAsset(assetName: string): AssetTypes.AssetValue?
 
     if success and result then
     local assetValue = {
-            AssetId = assetId,
+            AssetId = tostring(assetId),
             Instance = result,
         }
         assetCache[assetName] = assetValue
@@ -70,11 +84,25 @@ end
 task.spawn(function()
     for charName, effectsList in assetIdMap do
         for effectName, assetId in pairs(effectsList) do
-            local assetValue = loadAsset(effectName)
-            if assetValue then
-                assetCache[charName .. "_" .. effectName] = assetValue
+            -- Load the asset using the assetId
+            local success, result = pcall(function()
+                local characterModel = InsertService:LoadAsset(assetId):GetChildren()[1]
+                if not characterModel then
+                    error("Failed to load effect model for: " .. charName .. ":" .. effectName)
+                end
+                return characterModel
+            end)
+
+            if success and result then
+                local assetValue = {
+                    AssetId = tostring(assetId),
+                    Instance = result,
+                }
+                -- Store with the format "Character:AbilityName"
+                assetCache[charName .. ":" .. effectName] = assetValue
+                print("Loaded effect:", charName .. ":" .. effectName)
             else
-                warn("Failed to preload asset:", charName, effectName)
+                warn("Failed to preload effect:", charName .. ":" .. effectName, result)
             end
         end
     end

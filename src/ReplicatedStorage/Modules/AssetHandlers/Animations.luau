@@ -167,6 +167,7 @@ function AnimAssets.PreloadAll()
     for packName, pack in pairs(packs) do
         for animName in pairs(pack) do
             task.spawn(loadClip, packName, animName)
+            print(`Preloading animation ${animName} from pack ${packName}`)
         end
     end
 end
