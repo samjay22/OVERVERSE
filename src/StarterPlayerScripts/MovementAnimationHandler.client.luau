@@ -21,6 +21,9 @@ local Players = game:GetService("Players")
 -- Dependencies
 local BindableEventHelper = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Utility"):WaitForChild("BindableEventHelper"))
 
+-- Check for shift lock state
+local ShiftLockState = ReplicatedStorage:WaitForChild("ShiftLockState")
+
 -- Constants
 local Player = Players.LocalPlayer
 local ANIM_TAG = tostring(Player.UserId) .. "_Animations"
@@ -71,6 +74,7 @@ type AnimationState = {
     overlays: { [string]: AnimationTrack },
     lastDesired: string?,
     lastMoveVector: Vector3?,
+    lastStateChange: number?,
 }
 
 -- Animation system class
@@ -95,6 +99,7 @@ function MovementAnimationHandler.new()
         overlays = {},
         lastDesired = nil,
         lastMoveVector = Vector3.new(),
+        lastStateChange = 0, -- Track when state last changed for stability
     } :: AnimationState
     
     -- Input tracking
@@ -220,11 +225,26 @@ function MovementAnimationHandler:_setupCharacterConnections()
     end
     self.characterConnections = {}
     
-    -- Track movement changes
+    -- Track movement changes with aggressive debouncing to prevent rotation interference
+    local lastMoveUpdate = 0
+    local lastMoveDirection = Vector3.new()
     self.characterConnections[#self.characterConnections + 1] = self.humanoid:GetPropertyChangedSignal("MoveDirection"):Connect(function()
-        -- Small delay to let movement settle
-        task.wait(0.05)
-        self:_updateLocomotion()
+        local now = tick()
+        local currentMoveDirection = self.humanoid.MoveDirection
+        
+        -- Check if this is a significant movement change, not just rotation-induced fluctuation
+        local magnitudeChange = math.abs(currentMoveDirection.Magnitude - lastMoveDirection.Magnitude)
+        local isSignificantChange = magnitudeChange > 0.1
+        
+        -- Only update if enough time has passed AND it's a significant change
+        if (now - lastMoveUpdate > 0.1) and (isSignificantChange or currentMoveDirection.Magnitude < 0.05) then
+            lastMoveUpdate = now
+            lastMoveDirection = currentMoveDirection
+            
+            -- Small delay to let movement settle after rotation
+            task.wait(0.05)
+            self:_updateLocomotion()
+        end
     end)
     
     -- Track jump state - more immediate response needed
@@ -239,7 +259,7 @@ function MovementAnimationHandler:_setupCharacterConnections()
         self:_updateLocomotion()
         
         -- Additional update after a brief delay to catch velocity changes
-        task.wait(0.1)
+        task.wait(0.05)
         self:_updateLocomotion()
     end)
     
@@ -348,6 +368,7 @@ function MovementAnimationHandler:_cleanup()
         overlays = {},
         lastDesired = nil,
         lastMoveVector = Vector3.new(),
+        lastStateChange = 0,
     }
     self.isReady = false
     self.lastPosition = nil
@@ -531,10 +552,21 @@ function MovementAnimationHandler:_determineDesiredState(): string
     
     local hasInput = next(self.pressedKeys) ~= nil
     local moveDirection = self.humanoid.MoveDirection
-    local isMoving = moveDirection.Magnitude > MOVEMENT_THRESHOLD
     local humanoidState = self.humanoid:GetState()
-    local isBackWalking = self.pressedKeys[Enum.KeyCode.S] and not self.pressedKeys[Enum.KeyCode.W]
     local yVelocity = self.velocity.Y
+    
+    -- Check if shift lock is active to adjust movement detection
+    local isShiftLocked = ShiftLockState.Value ~= false
+    
+    -- When shift locked, use a more stable movement threshold and rely more on input
+    local movementThreshold = MOVEMENT_THRESHOLD
+    if isShiftLocked then
+        -- During rotation (mouse movement), MoveDirection can fluctuate even when not actually moving
+        -- So we use a slightly higher threshold and prioritize input detection
+        movementThreshold = MOVEMENT_THRESHOLD * 1.2
+    end
+    
+    local isActuallyMoving = moveDirection.Magnitude > movementThreshold
     
     -- Prioritize jump/fall states based on humanoid state first, then velocity
     if humanoidState == Enum.HumanoidStateType.Jumping then
@@ -556,10 +588,19 @@ function MovementAnimationHandler:_determineDesiredState(): string
        humanoidState == Enum.HumanoidStateType.None or
        (humanoidState == Enum.HumanoidStateType.Landed and yVelocity < JUMP_HEIGHT_THRESHOLD) then
         
-        if isBackWalking and (hasInput or isMoving) then
-            return "BackWalk"
-        elseif hasInput or isMoving then
-            return "Walk"
+        -- When shift locked, prioritize input over movement direction to avoid rotation interference
+        if isShiftLocked and hasInput then
+            -- Use input-based detection when shift locked to avoid rotation interference
+            local isBackWalking = self.pressedKeys[Enum.KeyCode.S] and not self.pressedKeys[Enum.KeyCode.W]
+            return isBackWalking and "BackWalk" or "Walk"
+        elseif isActuallyMoving then
+            -- Normal movement detection when not shift locked or when no input but moving
+            local isBackWalking = self.pressedKeys[Enum.KeyCode.S] and not self.pressedKeys[Enum.KeyCode.W]
+            return isBackWalking and "BackWalk" or "Walk"
+        elseif hasInput and not isShiftLocked then
+            -- If we have input but no movement (like turning in place) when not shift locked
+            local isBackWalking = self.pressedKeys[Enum.KeyCode.S] and not self.pressedKeys[Enum.KeyCode.W]
+            return isBackWalking and "BackWalk" or "Walk"
         else
             return "Idle"
         end
@@ -597,15 +638,52 @@ function MovementAnimationHandler:_updateLocomotion()
     local isJumpFallState = desiredState == "Jump" or desiredState == "Fall"
     local wasJumpFallState = self.state.lastDesired == "Jump" or self.state.lastDesired == "Fall"
     
-    -- Check if we need to change animation
-    local shouldChange = desiredState ~= self.state.lastDesired or
-                         not self.state.current or 
-                         not self.state.current.IsPlaying or
-                         (isJumpFallState or wasJumpFallState) or -- Always update for jump/fall transitions
-                         (currentMoveVector - self.state.lastMoveVector).Magnitude > 0.1
+    -- Add extra stability for walk animations to prevent rotation interference
+    local isWalkState = desiredState == "Walk" or desiredState == "BackWalk"
+    local wasWalkState = self.state.lastDesired == "Walk" or self.state.lastDesired == "BackWalk"
+    
+    -- For walk states, require a more significant change to prevent rotation interference
+    local significantMoveChange = (currentMoveVector - self.state.lastMoveVector).Magnitude > 0.3
+    local stateChanged = desiredState ~= self.state.lastDesired
+    
+    -- Special handling for walk animations - be more conservative about changes
+    local shouldChange = false
+    local now = tick()
+    local timeSinceLastChange = now - (self.state.lastStateChange or 0)
+    
+    if isJumpFallState or wasJumpFallState then
+        -- Always update for jump/fall transitions
+        shouldChange = true
+    elseif not self.state.current or not self.state.current.IsPlaying then
+        -- Always update if no current animation
+        shouldChange = true
+    elseif stateChanged then
+        -- State changed - add minimum time between walk state changes for stability
+        if isWalkState and wasWalkState and timeSinceLastChange < 0.15 then
+            -- Recent walk state change - ignore to prevent rotation interference
+            shouldChange = false
+        elseif isWalkState and wasWalkState then
+            -- Walk to walk transition (like Walk to BackWalk) after enough time
+            shouldChange = true
+        elseif not isWalkState or not wasWalkState then
+            -- Non-walk transitions - normal handling
+            shouldChange = true
+        else
+            -- Walk state changes - require more stability
+            shouldChange = significantMoveChange
+        end
+    elseif significantMoveChange and not isWalkState then
+        -- Significant movement change for non-walk states
+        shouldChange = true
+    end
     
     if not shouldChange then
         return
+    end
+    
+    -- Update state change time
+    if stateChanged then
+        self.state.lastStateChange = now
     end
     
     self.state.lastDesired = desiredState
@@ -634,6 +712,8 @@ function MovementAnimationHandler:_updateLocomotion()
     local fadeTime = DEFAULT_FADE_TIME
     if isJumpFallState then
         fadeTime = 0.05 -- Faster transitions for jump/fall
+    elseif desiredState == "Walk" or desiredState == "BackWalk" then
+        fadeTime = 0.08 -- Slightly faster transitions for walking to improve responsiveness
     end
     
     if self.state.current and self.state.current ~= track and self.state.current.IsPlaying then
@@ -658,8 +738,7 @@ function MovementAnimationHandler:_setupInputHandling()
         local keyCode = input.KeyCode
         if MOVEMENT_KEYS[keyCode] then
             self.pressedKeys[keyCode] = true
-            -- Force immediate update on input
-            task.wait()
+            -- Immediate update for better responsiveness
             self:_updateLocomotion()
         end
     end)
@@ -670,8 +749,7 @@ function MovementAnimationHandler:_setupInputHandling()
         local keyCode = input.KeyCode
         if MOVEMENT_KEYS[keyCode] then
             self.pressedKeys[keyCode] = nil
-            -- Force immediate update on input end
-            task.wait()
+            -- Immediate update for better responsiveness
             self:_updateLocomotion()
         end
     end)
@@ -679,7 +757,6 @@ function MovementAnimationHandler:_setupInputHandling()
     UserInputService.WindowFocusReleased:Connect(function()
         -- Clear all pressed keys when window loses focus
         self.pressedKeys = {}
-        task.wait()
         self:_updateLocomotion()
     end)
 end

@@ -39,7 +39,8 @@ type ShiftLockConfig = {
     LOCKED_MOUSE_ICON: string,
     SHIFT_LOCK_KEYBINDS: {Enum.KeyCode},
     AUTO_ENABLE: boolean,
-    ALLOW_TOGGLE: boolean
+    ALLOW_TOGGLE: boolean,
+    MOVEMENT_ROTATION_DELAY: number
 }
 
 type ShiftLockClass = {
@@ -68,7 +69,8 @@ local Config: ShiftLockConfig = table.freeze({
     LOCKED_MOUSE_ICON = "rbxassetid://111111111",
     SHIFT_LOCK_KEYBINDS = {Enum.KeyCode.LeftShift, Enum.KeyCode.RightShift},
     AUTO_ENABLE = true,
-    ALLOW_TOGGLE = true
+    ALLOW_TOGGLE = true,
+    MOVEMENT_ROTATION_DELAY = 0.1 -- Delay before applying rotation when moving
 })
 
 --// Module \\--
@@ -231,6 +233,8 @@ function ShiftLock.new()
     self._cameraOffsetSpring.Damper = Config.TRANSITION_SPRING_DAMPER
     
     self.Enabled = false
+    self._lastMoveDirection = Vector3.new()
+    self._movementStartTime = 0
         
     return self
 end
@@ -329,6 +333,9 @@ function ShiftLock:ToggleShiftLock(Enable: boolean?)
     if not self.Enabled then
         self.Humanoid.AutoRotate = true
         self._shiftlockMaid:Clear()
+        -- Reset movement tracking
+        self._lastMoveDirection = Vector3.new()
+        self._movementStartTime = 0
         return
     end
     
@@ -338,17 +345,49 @@ function ShiftLock:ToggleShiftLock(Enable: boolean?)
         self.Humanoid.AutoRotate = not self.Enabled
         
         if self.Humanoid.Sit then return end
+        
+        -- Track movement state changes
+        local currentMoveDirection = self.Humanoid.MoveDirection
+        local isMoving = currentMoveDirection.Magnitude > 0.1
+        local wasMoving = self._lastMoveDirection.Magnitude > 0.1
+        
+        -- Update movement timing
+        if isMoving and not wasMoving then
+            self._movementStartTime = tick()
+        end
+        
+        local timeSinceMovementStart = tick() - self._movementStartTime
+        local humanoidState = self.Humanoid:GetState()
+        local isGrounded = humanoidState == Enum.HumanoidStateType.Running or 
+                          humanoidState == Enum.HumanoidStateType.RunningNoPhysics or
+                          humanoidState == Enum.HumanoidStateType.None
+        
+        -- Use a more gentle rotation approach that respects movement
         if Config.SMOOTH_CHARACTER_ROTATION then
             local _, y = Camera.CFrame:ToOrientation()
-            self.RootPart.CFrame = self.RootPart.CFrame:Lerp(
-                CFrame_new(self.RootPart.Position) * CFrame_Angles(0, y, 0),
-                Delta * 5 * Config.CHARACTER_ROTATION_SPEED
-            )
+            local targetCFrame = CFrame_new(self.RootPart.Position) * CFrame_Angles(0, y, 0)
+            
+            -- Reduce rotation speed when moving to prevent animation conflicts
+            local rotationSpeed = Config.CHARACTER_ROTATION_SPEED
+            if isMoving and timeSinceMovementStart < Config.MOVEMENT_ROTATION_DELAY then
+                rotationSpeed = rotationSpeed * 0.2 -- Very slow rotation when just starting to move
+            elseif isMoving then
+                rotationSpeed = rotationSpeed * 0.6 -- Reduced rotation when moving
+            end
+            
+            -- Use a smaller lerp step when character is moving
+            local lerpAlpha = Delta * 5 * rotationSpeed
+            self.RootPart.CFrame = self.RootPart.CFrame:Lerp(targetCFrame, lerpAlpha)
         else
-            local _, y = Camera.CFrame:ToOrientation()
-            self.RootPart.CFrame = CFrame_new(self.RootPart.Position) * CFrame_Angles(0, y, 0)
-		end
-
+            -- Only apply immediate rotation when not moving to avoid conflicts
+            if not isMoving or not isGrounded then
+                local _, y = Camera.CFrame:ToOrientation()
+                self.RootPart.CFrame = CFrame_new(self.RootPart.Position) * CFrame_Angles(0, y, 0)
+            end
+        end
+        
+        -- Store previous move direction for next frame
+        self._lastMoveDirection = currentMoveDirection
     end)
 end
 
@@ -368,6 +407,9 @@ function ShiftLock:ToggleLock(Enable)
 	if not self.Enabled then
 		self.Humanoid.AutoRotate = true
 		self._shiftlockMaid:Clear()
+		-- Reset movement tracking
+		self._lastMoveDirection = Vector3.new()
+		self._movementStartTime = 0
 		return
 	end
 
@@ -378,16 +420,48 @@ function ShiftLock:ToggleLock(Enable)
 
 		if self.Humanoid.Sit then return end
 
+		-- Track movement state changes
+		local currentMoveDirection = self.Humanoid.MoveDirection
+		local isMoving = currentMoveDirection.Magnitude > 0.1
+		local wasMoving = self._lastMoveDirection.Magnitude > 0.1
+		
+		-- Update movement timing
+		if isMoving and not wasMoving then
+			self._movementStartTime = tick()
+		end
+		
+		local timeSinceMovementStart = tick() - self._movementStartTime
+		local humanoidState = self.Humanoid:GetState()
+		local isGrounded = humanoidState == Enum.HumanoidStateType.Running or 
+		                  humanoidState == Enum.HumanoidStateType.RunningNoPhysics or
+		                  humanoidState == Enum.HumanoidStateType.None
+
+		-- Use a more gentle rotation approach that respects movement
 		if Config.SMOOTH_CHARACTER_ROTATION then
 			local _, y = Camera.CFrame:ToOrientation()
-			self.RootPart.CFrame = self.RootPart.CFrame:Lerp(
-				CFrame_new(self.RootPart.Position) * CFrame_Angles(0, y, 0),
-				Delta * 5 * Config.CHARACTER_ROTATION_SPEED
-			)
+			local targetCFrame = CFrame_new(self.RootPart.Position) * CFrame_Angles(0, y, 0)
+			
+			-- Reduce rotation speed when moving to prevent animation conflicts
+			local rotationSpeed = Config.CHARACTER_ROTATION_SPEED
+			if isMoving and timeSinceMovementStart < Config.MOVEMENT_ROTATION_DELAY then
+				rotationSpeed = rotationSpeed * 0.2 -- Very slow rotation when just starting to move
+			elseif isMoving then
+				rotationSpeed = rotationSpeed * 0.6 -- Reduced rotation when moving
+			end
+			
+			-- Use a smaller lerp step when character is moving
+			local lerpAlpha = Delta * 5 * rotationSpeed
+			self.RootPart.CFrame = self.RootPart.CFrame:Lerp(targetCFrame, lerpAlpha)
 		else
-			local _, y = Camera.CFrame:ToOrientation()
-			self.RootPart.CFrame = CFrame_new(self.RootPart.Position) * CFrame_Angles(0, y, 0)
+			-- Only apply immediate rotation when not moving to avoid conflicts
+			if not isMoving or not isGrounded then
+				local _, y = Camera.CFrame:ToOrientation()
+				self.RootPart.CFrame = CFrame_new(self.RootPart.Position) * CFrame_Angles(0, y, 0)
+			end
 		end
+		
+		-- Store previous move direction for next frame
+		self._lastMoveDirection = currentMoveDirection
 	end)
 end
 
