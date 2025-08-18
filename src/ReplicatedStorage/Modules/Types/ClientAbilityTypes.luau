@@ -52,7 +52,9 @@ export type ClientAbilityModule = {
 
     getAbilityInputRequired : () -> Enum.KeyCode | Enum.UserInputType,
     -- Optional flag to indicate which class can use this ability. Return nil for "any class".
-    getAbilityClassId: () -> ClassId?
+    getAbilityClassId: () -> ClassId?,
+    getAbilityRange: () -> number?,
+    getRequiresTarget: () -> boolean?
 }
 
 return {}

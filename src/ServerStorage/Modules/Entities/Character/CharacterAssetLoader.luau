@@ -18,9 +18,16 @@ export type ICharacterAssetLoader = {
 function CharacterAssetLoader.new(): ICharacterAssetLoader
 	local self = setmetatable({}, CharacterAssetLoader)
 	
-	-- Asset cache for frequently used assets
+	-- High-performance LRU caches with size limits
 	self._assetCache = {} :: {[string]: Model}
-	self._animationCache = {} :: {[string]: {[string]: any}} -- packName -> {animationName -> AssetValue}
+	self._assetCacheOrder = {} :: {string} -- LRU order tracking
+	self._assetCacheSize = 0
+	self._maxAssetCache = 50 -- Limit asset cache size
+	
+	self._animationCache = {} :: {[string]: {[string]: any}}
+	self._animationCacheOrder = {} :: {string}
+	self._animationCacheSize = 0 
+	self._maxAnimationCache = 20 -- Limit animation pack cache
 	
 	return self
 end
@@ -28,9 +35,12 @@ end
 function CharacterAssetLoader:GetCharacterAsset(assetKey: string?): Model?
 	local key = assetKey or "Default"
     
-	-- Check cache first
-	if self._assetCache[key] then
-		return self._assetCache[key]
+	-- Check cache first with LRU update
+	local cached = self._assetCache[key]
+	if cached then
+		-- Move to end of LRU order (most recently used)
+		self:_updateAssetLRU(key)
+		return cached
 	end
 	
 	-- Load from asset handler
@@ -39,8 +49,8 @@ function CharacterAssetLoader:GetCharacterAsset(assetKey: string?): Model?
 		local val = handler.GetAsset(key)
 		local inst = val and val.Instance
 		if inst and inst:IsA("Model") then
-			-- Cache the asset
-			self._assetCache[key] = inst
+			-- Cache with LRU eviction
+			self:_cacheAsset(key, inst)
 			return inst
 		end
 	end
@@ -52,9 +62,11 @@ end
 function CharacterAssetLoader:GetAnimationAsset(packName: string?): any?
 	local key = packName or "Default"
 	
-	-- Check cache first
-	if self._animationCache[key] then
-		return self._animationCache[key]
+	-- Check cache first with LRU update
+	local cached = self._animationCache[key]
+	if cached then
+		self:_updateAnimationLRU(key)
+		return cached
 	end
 	
 	-- Load all animations for the pack using the PreloadPack method
@@ -77,8 +89,8 @@ function CharacterAssetLoader:GetAnimationAsset(packName: string?): any?
 			end
 			
 			if next(packAnimations) then
-				-- Cache the animation pack
-				self._animationCache[key] = packAnimations
+				-- Cache with LRU eviction
+				self:_cacheAnimation(key, packAnimations)
 				return packAnimations
 			end
 		end
@@ -99,6 +111,63 @@ function CharacterAssetLoader:PreloadAssets(assetKeys: {string})
 	for _, key in ipairs(assetKeys) do
 		self:GetCharacterAsset(key)
 	end
+end
+
+-- High-performance LRU cache management methods
+function CharacterAssetLoader:_updateAssetLRU(key: string)
+	-- Find and move key to end (most recently used)
+	local order = self._assetCacheOrder
+	for i = 1, #order do
+		if order[i] == key then
+			-- Fast removal and append
+			table.remove(order, i)
+			table.insert(order, key)
+			return
+		end
+	end
+end
+
+function CharacterAssetLoader:_cacheAsset(key: string, asset: Model)
+	-- Check if we need to evict
+	if self._assetCacheSize >= self._maxAssetCache then
+		local evictKey = table.remove(self._assetCacheOrder, 1) -- Remove oldest
+		if evictKey then
+			self._assetCache[evictKey] = nil
+			self._assetCacheSize = self._assetCacheSize - 1
+		end
+	end
+	
+	-- Add new asset
+	self._assetCache[key] = asset
+	table.insert(self._assetCacheOrder, key)
+	self._assetCacheSize = self._assetCacheSize + 1
+end
+
+function CharacterAssetLoader:_updateAnimationLRU(key: string)
+	local order = self._animationCacheOrder
+	for i = 1, #order do
+		if order[i] == key then
+			table.remove(order, i)
+			table.insert(order, key)
+			return
+		end
+	end
+end
+
+function CharacterAssetLoader:_cacheAnimation(key: string, animations: {[string]: any})
+	-- Check if we need to evict
+	if self._animationCacheSize >= self._maxAnimationCache then
+		local evictKey = table.remove(self._animationCacheOrder, 1)
+		if evictKey then
+			self._animationCache[evictKey] = nil
+			self._animationCacheSize = self._animationCacheSize - 1
+		end
+	end
+	
+	-- Add new animation pack
+	self._animationCache[key] = animations
+	table.insert(self._animationCacheOrder, key)
+	self._animationCacheSize = self._animationCacheSize + 1
 end
 
 return CharacterAssetLoader

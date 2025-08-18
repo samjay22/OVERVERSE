@@ -66,6 +66,12 @@ local function _adapt(abilityModule: any): ClientAbility
         OnCancel = rejectFn, -- keep legacy alias
         getAbilityInputRequired = getInput,
         getAbilityClassId = getClassId,
+        getAbilityRange = if typeof(abilityModule.getAbilityRange) == "function"
+            then abilityModule.getAbilityRange
+            else function(): number? return nil end,
+        getRequiresTarget = if typeof(abilityModule.getRequiresTarget) == "function"
+            then abilityModule.getRequiresTarget
+            else function(): boolean? return nil end,
     }
 end
 

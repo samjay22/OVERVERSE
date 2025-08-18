@@ -15,15 +15,18 @@ function UpdateScheduler.New(interval: number?)
     self._interval = interval or 1/30 -- 0 = variable step
     self._accum = 0
 
-    -- Parallel-safe callbacks (no Instance access)
-    self._parCallbacks = table.create(8) :: { Callback }
-    self._parIds = {} :: { [string]: number } -- id -> index
-    self._parIdsByIndex = table.create(8) :: { [number]: string } -- index -> id
+    -- Pre-allocated tables for maximum performance
+    local initialCapacity = 32
+    
+    -- Parallel-safe callbacks (no Instance access) 
+    self._parCallbacks = table.create(initialCapacity) :: { Callback }
+    self._parIds = {} :: { [string]: number } -- id -> index (can't pre-allocate dict)
+    self._parIdsByIndex = table.create(initialCapacity) :: { [number]: string } -- index -> id
 
     -- Synchronized (main thread) callbacks (can touch Instances)
-    self._syncCallbacks = table.create(8) :: { Callback }
-    self._syncIds = {} :: { [string]: number }
-    self._syncIdsByIndex = table.create(8) :: { [number]: string }
+    self._syncCallbacks = table.create(initialCapacity) :: { Callback }
+    self._syncIds = {} :: { [string]: number } -- (can't pre-allocate dict)
+    self._syncIdsByIndex = table.create(initialCapacity) :: { [number]: string }
 
     self._running = false
     self._connection = nil :: RBXScriptConnection?

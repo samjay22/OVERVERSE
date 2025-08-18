@@ -42,12 +42,16 @@ NetworkManager.__index = NetworkManager
 function NetworkManager.New(): INetworkManager
 	local self = setmetatable({}, NetworkManager)
 	
-	-- Event management
+	-- Event management with pre-allocated tables
 	self._eventBus = EventBus.New()
 	self._remoteEvents = {} :: {[string]: RemoteEvent}
 	self._remoteFunctions = {} :: {[string]: RemoteFunction}
 	self._serverHandlers = {} :: {[string]: NetworkEventHandler}
-	self._connections = {} :: {RBXScriptConnection}
+	self._connections = table.create(32) :: {RBXScriptConnection}
+	
+	-- Connection pool for performance
+	self._connectionPool = table.create(64) :: {RBXScriptConnection}
+	self._poolSize = 0
 	
 	-- Create remotes folder if it doesn't exist
 	local remotesFolder: Folder? = ReplicatedStorage:FindFirstChild("Remotes") :: Folder?

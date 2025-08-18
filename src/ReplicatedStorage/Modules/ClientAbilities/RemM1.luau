@@ -17,11 +17,15 @@ local ABILITY_CLASS = "Rem"
 local ANIMATION_NAME = "M1"
 local COOLDOWN_TIME = 1.6
 local ANIM_FADE_TIME = 0.05
+local ATTACK_RANGE = 10
+local REQUIRES_TARGET = true
 local ANIM_PRIORITY = Enum.AnimationPriority.Action
 
 local Ability = {}
 
 function Ability.onRequest(ctx: SharedAbilityContext): AbilityResult
+    --replicate
+    warn("No replication yet")
     return {
         success = true,
         cooldowns = { [tostring(ctx.abilityId)] = ctx.timestamp + COOLDOWN_TIME },
@@ -33,7 +37,7 @@ local function playCharacterAnimation(animName: string): AnimationTrack?
     -- Find animation
     local animTag = tostring(Player.UserId) .. "_Animations"
     local animFolder = CollectionService:GetTagged(animTag)[1]
-    local anim = animFolder and animFolder:FindFirstChild(animName)
+    local anim = animFolder and animFolder:FindFirstChild(animName) :: Animation?
     
     -- Find animator
     local character = Player.Character
@@ -62,7 +66,7 @@ local function playCharacterAnimation(animName: string): AnimationTrack?
     
     connections.loop = track.DidLoop:Connect(function()
         track:Stop(ANIM_FADE_TIME)
-        for _, conn in connections do
+        for _, conn : any in connections do
             conn:Disconnect()
         end
         table.clear(connections)
@@ -83,7 +87,7 @@ end
 
 local function attackTarget()
     local player = Players.LocalPlayer
-    local targetKey = player:GetAttribute("targetKey")
+    local targetKey = player:GetAttribute("targetKey") :: string
     local target = CollectionService:GetTagged(targetKey)[1]
     if not target then 
         warn("No target")
@@ -105,7 +109,7 @@ local function attackTarget()
     local effectclone = effect:Clone()
     Debris:AddItem(effectclone, 1) -- Clean up effect after 2 seconds
 
-    effectclone.Parent = target.PrimaryPart
+    effectclone.Parent = (target :: Model & {PrimaryPart : BasePart}).PrimaryPart
 end
 
 function Ability.onCast(ctx: SharedAbilityContext, serverData: any?)
@@ -123,6 +127,18 @@ end
 
 function Ability.getAbilityClassId()
     return ABILITY_CLASS
+end
+
+function Ability.getAbilityRange()
+    return ATTACK_RANGE
+end
+
+function Ability.getAbilityCooldown()
+    return COOLDOWN_TIME
+end
+
+function Ability.getRequiresTarget()
+    return REQUIRES_TARGET
 end
 
 return Ability

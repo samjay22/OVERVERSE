@@ -1,8 +1,9 @@
 --!strict
--- CharacterUpdateLoop - Handles the update scheduling and performance tracking
+-- CharacterUpdateLoop - Ultra-fast character updates with frame budgeting
 local Players = game:GetService("Players")
 
 local UpdateScheduler = require(game.ServerStorage.Modules.Utilities.UpdateScheduler)
+local FrameBudgetManager = require(game.ServerStorage.Modules.Utilities.FrameBudgetManager)
 local CharacterTypes = require(game.ServerStorage.Modules.Types.CharacterTypes)
 
 type internalCharacter = CharacterTypes.internalCharacter
@@ -31,16 +32,22 @@ function CharacterUpdateLoop.new(interval: number?): ICharacterUpdateLoop
 	self._scheduler = UpdateScheduler.New(self._interval)
 	self._updateCallback = nil :: ((number) -> ())?
 	self._isRunning = false
-	self._connections = {}
+	self._connections = table.create(8) -- Pre-allocated connections array
 	
-	-- Performance tracking
+	-- Performance tracking with pre-allocated structure
 	self._performanceMetrics = {
 		UpdateTime = 0,
 		CharacterCount = 0,
 		LastCleanup = 0
 	} :: PerformanceMetrics
 	
-	return self
+	-- Ultra-fast batch processing state
+	self._batchedUpdates = table.create(64) -- Pre-allocated batch array
+	self._updateBatchSize = 16 -- Process characters in batches
+	self._lastUpdateTime = 0
+	self._frameSkipThreshold = 16.67 -- Skip frames if falling behind (60fps = 16.67ms)
+	
+	return (self :: any) :: ICharacterUpdateLoop
 end
 
 function CharacterUpdateLoop:SetUpdateCallback(callback: (number) -> ())

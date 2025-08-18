@@ -6,10 +6,12 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 
--- Network optimization constants
-local BATCH_SIZE = 10 -- Maximum requests per batch
-local BATCH_INTERVAL = 0.033 -- ~30 FPS batching (33ms)
-local MAX_BATCH_WAIT = 0.1 -- Maximum time to wait for batch (100ms)
+-- Ultra-fast network optimization constants
+local BATCH_SIZE = 15 -- Increased batch size for better efficiency
+local BATCH_INTERVAL = 0.025 -- ~40 FPS batching (25ms) - faster
+local MAX_BATCH_WAIT = 0.075 -- Reduced max wait (75ms)
+local PRIORITY_BATCH_SIZE = 5 -- Smaller batches for critical abilities
+local COMPRESSION_THRESHOLD = 3 -- Compress batches with 3+ items
 
 -- Types for network optimization
 export type NetworkBatch = {
@@ -44,28 +46,31 @@ NetworkBatchProcessor.__index = NetworkBatchProcessor
 function NetworkBatchProcessor.new()
     local self = setmetatable({}, NetworkBatchProcessor)
     
-    self.pendingRequests = {}
-    self.pendingValidations = {}
+    -- Pre-allocated tables for maximum performance
+    self.pendingRequests = table.create(32)
+    self.pendingValidations = table.create(16)
+    self.priorityRequests = table.create(8) -- High-priority requests
     self.lastBatchTime = 0
     self.batchTimer = nil
     
     -- Set up network events
-    local remoteFolder = ReplicatedStorage:FindFirstChild("Remotes")
+    local remoteFolder = ReplicatedStorage:FindFirstChild("Remotes") :: Folder?
     if not remoteFolder then
-        remoteFolder = Instance.new("Folder")
-        remoteFolder.Name = "Remotes"
-        remoteFolder.Parent = ReplicatedStorage
+        local newFolder = Instance.new("Folder")
+        newFolder.Name = "Remotes"
+        newFolder.Parent = ReplicatedStorage
+        remoteFolder = newFolder
     end
     
-    self.batchRemote = remoteFolder:FindFirstChild("BatchedPredictions") :: RemoteEvent?
+    self.batchRemote = (remoteFolder :: Folder):FindFirstChild("BatchedPredictions") :: RemoteEvent?
     if not self.batchRemote then
         local newRemote = Instance.new("RemoteEvent") :: RemoteEvent
         newRemote.Name = "BatchedPredictions"
-        newRemote.Parent = remoteFolder
+        newRemote.Parent = (remoteFolder :: Folder)
         self.batchRemote = newRemote
     end
     
-    -- Set up heartbeat-based batching for consistent performance
+    -- Ultra-fast heartbeat-based batching with priority handling
     RunService.Heartbeat:Connect(function()
         self:HeartbeatUpdate()
     end)
@@ -77,18 +82,52 @@ function NetworkBatchProcessor:ShouldBatch(): boolean
     local now = tick()
     local timeSinceLastBatch = now - self.lastBatchTime
     
-    -- Batch if we have enough requests or enough time has passed
+    -- Immediate batch for priority requests
+    if #self.priorityRequests > 0 then
+        return true
+    end
+    
+    -- Ultra-fast batching logic - more aggressive
     return #self.pendingRequests >= BATCH_SIZE or 
-           timeSinceLastBatch >= MAX_BATCH_WAIT and #self.pendingRequests > 0
+           timeSinceLastBatch >= BATCH_INTERVAL or
+           (timeSinceLastBatch >= MAX_BATCH_WAIT and #self.pendingRequests > 0)
 end
 
 function NetworkBatchProcessor:AddRequest(request: any): ()
-    table.insert(self.pendingRequests, request)
+    -- Check if this is a priority request (damage, blocking, critical abilities)
+    local isPriority = self:_isPriorityRequest(request)
     
-    -- Immediate batch if we hit the size limit
-    if #self.pendingRequests >= BATCH_SIZE then
-        self:ProcessBatch()
+    if isPriority then
+        table.insert(self.priorityRequests, request)
+        -- Immediate batch for critical actions
+        if #self.priorityRequests >= 3 then
+            self:ProcessBatch()
+        end
+    else
+        table.insert(self.pendingRequests, request)
+        
+        -- Immediate batch if we hit the size limit
+        if #self.pendingRequests >= BATCH_SIZE then
+            self:ProcessBatch()
+        end
     end
+end
+
+function NetworkBatchProcessor:_isPriorityRequest(request: any): boolean
+    -- Determine if request is high-priority based on ability type
+    local abilityId = request.abilityId
+    if not abilityId then return false end
+    
+    -- Critical abilities that need immediate processing
+    local priorityAbilities = {
+        ["Block"] = true,
+        ["Parry"] = true,
+        ["RemM1"] = true,
+        ["RemM2"] = true,
+        ["Dash"] = true,
+    }
+    
+    return priorityAbilities[abilityId] == true
 end
 
 function NetworkBatchProcessor:AddValidation(validation: any): ()
@@ -96,29 +135,52 @@ function NetworkBatchProcessor:AddValidation(validation: any): ()
 end
 
 function NetworkBatchProcessor:ProcessBatch(): ()
-    if #self.pendingRequests == 0 and #self.pendingValidations == 0 then
+    -- Fast path: exit early if nothing to process
+    if #self.pendingRequests == 0 and #self.pendingValidations == 0 and #self.priorityRequests == 0 then
         return
+    end
+    
+    -- Merge priority and regular requests, with priority first
+    local allRequests = table.create(#self.priorityRequests + #self.pendingRequests)
+    
+    -- Priority requests go first
+    for i = 1, #self.priorityRequests do
+        allRequests[i] = self.priorityRequests[i]
+    end
+    
+    -- Add regular requests
+    local offset = #self.priorityRequests
+    for i = 1, #self.pendingRequests do
+        allRequests[offset + i] = self.pendingRequests[i]
     end
     
     local batch: NetworkBatch = {
         timestamp = workspace:GetServerTimeNow(),
-        requests = table.clone(self.pendingRequests),
+        requests = allRequests,
         validations = table.clone(self.pendingValidations),
+        priority = #self.priorityRequests > 0, -- Flag for server priority handling
     }
     
-    -- Send batch
+    -- Send batch with error handling
     if self.batchRemote then
-        if RunService:IsClient() then
-            self.batchRemote:FireServer(batch)
-        else
-            -- Server-side: broadcast to all clients
-            self.batchRemote:FireAllClients(batch)
+        local success, err = pcall(function()
+            if RunService:IsClient() then
+                (self.batchRemote :: RemoteEvent):FireServer(batch)
+            else
+                -- Server-side: broadcast to all clients
+                (self.batchRemote :: RemoteEvent):FireAllClients(batch)
+            end
+        end)
+        
+        if not success then
+            warn("Batch send failed:", err)
         end
     end
     
-    -- Clear pending items
+    -- Fast clear using table.clear for better performance
     table.clear(self.pendingRequests)
     table.clear(self.pendingValidations)
+    table.clear(self.priorityRequests)
     self.lastBatchTime = tick()
 end
 

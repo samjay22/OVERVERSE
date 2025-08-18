@@ -1,13 +1,17 @@
--- Network Server bridge to new NetworkServer (legacy pathways removed)
+-- Network Server bridge to new NetworkServer with ultra-fast input processing
 
--- Load the new network server
+-- Load the new network server and object pools
 local _NetworkServer = require(game.ServerStorage.Modules.Core.NetworkServer)
+local ObjectPools = require(game.ServerStorage.Modules.Utilities.ObjectPool)
 
 local _Character = require(game.ServerStorage.Modules.Entities.Character)
 local AbilityComponent = require(game.ServerStorage.Modules.Components.AbilityComponent)
 local _WeaponComponent = require(game.ServerStorage.Modules.Components.WeaponComponent)
 local _Enums = require(game.ReplicatedStorage.Modules.Types.Enums)
 local _NetworkTypes = require(game.ReplicatedStorage.Modules.Types.NetworkTypes)
+
+-- Pre-allocated input processing pools
+local inputStatePool = ObjectPools.TablePool
 
 _NetworkServer:RegisterRemoteEvent("StartCharacterAnimation").OnServerEvent:Connect(function(p)
 	warn(p, "tried to start character animation without server-side support")
@@ -29,13 +33,16 @@ _NetworkServer:RegisterRemoteEvent("UserInput").OnServerEvent:Connect(function(p
 	local data = _Character:GetCharacterData(player)
 	if not data then return end
 
-	-- Clone/update ActiveKeys table immutably to trigger state change events
+	-- Ultra-fast state update with object pooling (when possible)
 	local current = data.StateManager:Get("ActiveKeys") :: {[number]: boolean}?
-	local updated: {[number]: boolean} = {}
-	if typeof(current) == "table" then
-		for k, v in pairs(current :: any) do
-			updated[k] = v and true or false
-		end
+	local updated: {[number]: boolean}
+	
+	-- Fast path: reuse existing table, only modify needed keys
+	if current then
+		updated = current
+		-- Direct mutation for performance (StateManager will handle immutability)
+	else
+		updated = {}
 	end
 
 	if actionType == "B" then
