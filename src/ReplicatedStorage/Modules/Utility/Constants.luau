@@ -2,6 +2,7 @@
 return {
     DEFAULT_RESPAWN_TIME = 5,
     BINDABLE_EVENT_POOL_SIZE = 5000,
+    SHIFT_LOCK_OFFSET =  Vector3.new(3, 0.25, 0),
 
     CHARACTER_STATE_DEFINITIONS = {
         Health = {

@@ -149,7 +149,7 @@ function CharacterFactory:SetupAnimations(characterModel: Model, player: Player,
 	local packName = animationPack or "Default"
 	local animAsset = self._assetLoader:GetAnimationAsset(packName)
 	
-	task.delay(2, function()
+	task.delay(.25, function()
 		if animAsset then
 		-- Custom async iterator that yields until animation instances are available
 		local function asyncAnimationIterator()
@@ -174,11 +174,11 @@ function CharacterFactory:SetupAnimations(characterModel: Model, player: Player,
 			clone.Name = animName
 			clone.Parent = characterAnimationsFolder
 		end
-
-		-- Tag the animations folder with the player's user ID
-		CollectionService:AddTag(characterAnimationsFolder, animTag)
 		end
 	end)
+
+	-- Tag the animations folder with the player's user ID
+	CollectionService:AddTag(characterAnimationsFolder, animTag)
 end
 
 function CharacterFactory:_InitializeStateManager(characterData: internalCharacter, config: CharacterConfig?)

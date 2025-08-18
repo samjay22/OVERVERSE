@@ -5,7 +5,10 @@ local AssetTypes = require(game.ReplicatedStorage.Modules.Types.AssetTypes)
 
 local assetCache : { [string]: AssetTypes.AssetValue } = {}
 local assetIdMap = {
-    RemAura = "83733500844066",
+    Rem = {
+        Heal = 100848112721839,
+        Aura = 83733500844066
+    }
 }
 
 local function loadAsset(assetName: string): AssetTypes.AssetValue?
@@ -63,5 +66,18 @@ function CharacterAssets.PreloadAssets(assetNames: {string}): ()
         loadAsset(name)
     end
 end
+
+task.spawn(function()
+    for charName, effectsList in assetIdMap do
+        for effectName, assetId in pairs(effectsList) do
+            local assetValue = loadAsset(effectName)
+            if assetValue then
+                assetCache[charName .. "_" .. effectName] = assetValue
+            else
+                warn("Failed to preload asset:", charName, effectName)
+            end
+        end
+    end
+end)
 
 return CharacterAssets

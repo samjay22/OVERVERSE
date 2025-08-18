@@ -37,6 +37,11 @@ CoreRemote.OnClientEvent:Connect(function(data)
 
     local animator : Animator? = humanoid:FindFirstChildOfClass("Animator")
     if animator then
+        task.spawn(function()
+            for _, anim in animFolder:GetChildren() do
+                animator:LoadAnimation(anim)
+            end
+        end)
         local clip : AnimationTrack = animator:LoadAnimation(myAnimClip)
         print("Loaded animation clip:", clip)
         clip.Looped = true

@@ -18,6 +18,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local SharedUtils = ReplicatedStorage.Modules.Utility
 local Cleaner = require(SharedUtils.Cleaner)
 local Spring = require(SharedUtils.Spring)
+local Constants = require(SharedUtils.Constants)
 
 --// Constants \\--
 local LocalPlayer = Players.LocalPlayer
@@ -65,7 +66,7 @@ local Config: ShiftLockConfig = table.freeze({
     TRANSITION_SPRING_DAMPER = 0.5,
     CAMERA_TRANSITION_IN_SPEED = 12,
     CAMERA_TRANSITION_OUT_SPEED = 12,
-    LOCKED_CAMERA_OFFSET = Vector3.new(3, 0.25, 0),
+    LOCKED_CAMERA_OFFSET = Constants.SHIFT_LOCK_OFFSET,
     LOCKED_MOUSE_ICON = "rbxassetid://111111111",
     SHIFT_LOCK_KEYBINDS = {Enum.KeyCode.LeftShift, Enum.KeyCode.RightShift},
     AUTO_ENABLE = true,

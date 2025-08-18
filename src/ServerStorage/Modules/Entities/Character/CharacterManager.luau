@@ -249,15 +249,17 @@ function CharacterManager:SpawnCharacter(player: Player, config: CharacterConfig
 		characterModel:Destroy()
 		return nil
 	end
-	
-	-- Set up animations
-    local shiftState = self:GetCharacterState(player, "ShiftState")
-	local animationPack = (shiftState and LoadoutRegistry.Get(shiftState) or LoadoutRegistry.Get(classId)).animationPack
-    if not animationPack then
-        error(`No animation pack found for class {classId} or shift state {shiftState}`)
-    end
 
-	self._factory:SetupAnimations(characterModel, player, animationPack)
+	task.spawn(function()
+		-- Set up animations
+		local shiftState = self:GetCharacterState(player, "ShiftState")
+		local animationPack = (shiftState and LoadoutRegistry.Get(shiftState) or LoadoutRegistry.Get(classId)).animationPack
+		if not animationPack then
+			error(`No animation pack found for class {classId} or shift state {shiftState}`)
+		end
+
+		self._factory:SetupAnimations(characterModel, player, animationPack)
+	end)
 	
 	-- Now put the character in the workspace
 	characterModel.Parent = workspace
@@ -296,11 +298,6 @@ function CharacterManager:SpawnCharacter(player: Player, config: CharacterConfig
 	-- Set up ability loadout switching based on shift state
 	self:_SetupShiftStateHandling(characterData)
 	
-	-- Start character animation after a brief delay
-	task.delay(1, function()
-		NetworkServer:FireClient("StartCharacterAnimation", player, { "Idle" })
-	end)
-	
 	-- Register character
 	self._registry:Register(playerId, characterData)
 	
@@ -310,6 +307,8 @@ function CharacterManager:SpawnCharacter(player: Player, config: CharacterConfig
 	-- Notify listeners
 	CharacterAdded:Fire(characterData)
 	
+	NetworkServer:FireClient("StartCharacterAnimation", player, { "Idle" })
+
 	-- Notify client
 	if self._coreRemote then
 		pcall(function()

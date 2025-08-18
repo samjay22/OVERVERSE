@@ -1,6 +1,7 @@
 --!strict
 -- Shifter character with custom ShiftState
 
+local Effects = require(game.ReplicatedStorage.Modules.AssetHandlers).OnModuleLoaded("Effects")
 local CharacterTypes = require(game.ServerStorage.Modules.Types.CharacterTypes)
 
 local def: CharacterTypes.CharacterDefinition = {
@@ -22,8 +23,16 @@ local def: CharacterTypes.CharacterDefinition = {
 		LastShiftTime = 0,
 	},
 	hooks = {
-		onInit = function(character)
+		onInit = function(character : CharacterTypes.Character)
+			warn("init")
 			character.StateManager:Set("ShiftState", "Rem")
+
+			-- --load effects
+			-- local allEffects = Effects.GetAllAssets()
+			-- local effectsFolder = Instance.new("Folder")
+			-- effectsFolder.Name = "Effects"
+			-- effectsFolder.Parent = character.Character
+			-- character.Player:SetAttribute("EffectsFolder", effectsFolder)
 		end,
 		onUpdate = function(character, dt)
 			-- Example: auto revert after duration when in Beast
