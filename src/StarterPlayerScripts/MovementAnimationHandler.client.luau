@@ -1,62 +1,56 @@
--- MovementAnimationHandler: combines locomotion animation driving and input handling
--- Replaces AnimationHelper.client.luau and UserInputHelper.luau
+--[[
+    MovementAnimationHandler.client.luau
+    
+    A comprehensive animation system that handles:
+    - Character locomotion animations (idle, walk, jump, etc.)
+    - Animation overlays and exclusive animations
+    - Input handling for movement detection
+    - External animation control via bindable events
+    
+    Author: Rewritten for improved performance and maintainability
+    Date: August 17, 2025
+--]]
 
-local RunService: RunService = game:GetService("RunService")
-local CollectionService: CollectionService = game:GetService("CollectionService")
-local ReplicatedStorage: ReplicatedStorage = game:GetService("ReplicatedStorage")
-local UserInputService: UserInputService = game:GetService("UserInputService")
+-- Services
+local RunService = game:GetService("RunService")
+local CollectionService = game:GetService("CollectionService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
+local Players = game:GetService("Players")
 
+-- Dependencies
 local BindableEventHelper = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Utility"):WaitForChild("BindableEventHelper"))
 
-local Player: Player = game.Players.LocalPlayer
+-- Constants
+local Player = Players.LocalPlayer
+local ANIM_TAG = tostring(Player.UserId) .. "_Animations"
+local DEFAULT_FADE_TIME = 0.15
+local MOVEMENT_THRESHOLD = 0.1
+local JUMP_HEIGHT_THRESHOLD = 0.5
 
--- Keys that count as locomotion intent
-local CharacterStates = {
+-- Movement key mappings
+local MOVEMENT_KEYS = {
     [Enum.KeyCode.W] = "Walk",
-    [Enum.KeyCode.A] = "Walk",
+    [Enum.KeyCode.A] = "Walk", 
     [Enum.KeyCode.S] = "BackWalk",
     [Enum.KeyCode.D] = "Walk",
     [Enum.KeyCode.Space] = "Jump",
 }
 
--- Animation state
-local NextAnimation: AnimationTrack?
-local CurrentAnimation: AnimationTrack?
-
--- Optimization/state caches
-local ANIM_TAG = tostring(Player.UserId) .. "_Animations"
-
-local pressed: { [Enum.KeyCode]: true } = {}
-local trackCache: { [string]: AnimationTrack } = {}
-
-local currentCharacter: Model?
-local currentHumanoid: Humanoid?
-local currentAnimator: Animator?
-local currentAnimFolder: Instance?
-local lastDesired: string?
-
--- Central override state: when set, base movement/idle won’t take over
-local OverrideTrack: AnimationTrack?
-local trackStoppedConns: { [AnimationTrack]: RBXScriptConnection } = {}
-
--- Overlay ability layers (run on top of locomotion)
-local overlayTracks: { [string]: AnimationTrack } = {}
-local overlayStoppedConns: { [AnimationTrack]: RBXScriptConnection } = {}
-
--- Configurable locomotion animation names and overlay channel defaults
-local LocomotionMap: { [string]: string } = {
+-- Default locomotion animation mappings
+local LOCOMOTION_ANIMATIONS = {
     Idle = "Idle",
-    Walk = "Walk",
+    Walk = "Walk", 
+    BackWalk = "BackWalk",
+    Jump = "Jump",
+    Fall = "Fall",
 }
 
-type ChannelCfg = {
+-- Type definitions
+type ChannelConfig = {
     priority: Enum.AnimationPriority?,
     defaultFade: number?,
     defaultWeight: number?,
-}
-
-local ChannelConfig: { [string]: ChannelCfg } = {
-    default = { priority = Enum.AnimationPriority.Action, defaultFade = 0.15, defaultWeight = 1.0 },
 }
 
 type PlayRequest = {
@@ -66,412 +60,791 @@ type PlayRequest = {
     looped: boolean?,
     speed: number?,
     weight: number?,
-    overlay: boolean?, -- true to play on top of locomotion
-    mode: string?, -- "overlay" | "exclusive"
-    channel: string?, -- overlays channel key (e.g. "UpperBody"); defaults to "default"
+    overlay: boolean?,
+    mode: string?,
+    channel: string?,
 }
 
-local function getAnimFolder(): Instance?
-    if currentAnimFolder and currentAnimFolder.Parent ~= nil then
-        return currentAnimFolder
-    end
-    local tagged = CollectionService:GetTagged(ANIM_TAG)
-    currentAnimFolder = tagged and tagged[1] or nil
-    return currentAnimFolder
+type AnimationState = {
+    current: AnimationTrack?,
+    override: AnimationTrack?,
+    overlays: { [string]: AnimationTrack },
+    lastDesired: string?,
+    lastMoveVector: Vector3?,
+}
+
+-- Animation system class
+local MovementAnimationHandler = {}
+MovementAnimationHandler.__index = MovementAnimationHandler
+
+function MovementAnimationHandler.new()
+    local self = setmetatable({}, MovementAnimationHandler)
+    
+    -- State
+    self.character = nil
+    self.humanoid = nil
+    self.animator = nil
+    self.humanoidRootPart = nil
+    self.animationFolder = nil
+    self.isReady = false
+    
+    -- Animation state
+    self.state = {
+        current = nil,
+        override = nil,
+        overlays = {},
+        lastDesired = nil,
+        lastMoveVector = Vector3.new(),
+    } :: AnimationState
+    
+    -- Input tracking
+    self.pressedKeys = {}
+    
+    -- Animation caching
+    self.trackCache = {}
+    self.connections = {}
+    self.overlayConnections = {}
+    self.characterConnections = {}
+    
+    -- Movement tracking
+    self.lastPosition = nil
+    self.velocity = Vector3.new()
+    
+    -- Configuration
+    self.channelConfigs = {
+        default = {
+            priority = Enum.AnimationPriority.Action,
+            defaultFade = DEFAULT_FADE_TIME,
+            defaultWeight = 1.0,
+        },
+    }
+    
+    -- Initialize
+    self:_initialize()
+    
+    return self
 end
 
-local function ensureAnimator(humanoid: Humanoid): Animator?
-    if currentAnimator and currentAnimator.Parent == humanoid then
-        return currentAnimator
+function MovementAnimationHandler:_initialize()
+    -- Setup character tracking
+    if Player.Character then
+        self:_onCharacterAdded(Player.Character)
     end
+    
+    Player.CharacterAdded:Connect(function(character)
+        self:_onCharacterAdded(character)
+    end)
+    
+    Player.CharacterRemoving:Connect(function()
+        self:_onCharacterAdded(nil)
+    end)
+    
+    -- Setup input handling
+    self:_setupInputHandling()
+    
+    -- Setup bindable events
+    self:_setupBindableEvents()
+    
+    -- Start animation loop
+    self:_startAnimationLoop()
+    
+    -- Setup animation folder monitoring
+    self:_setupAnimationFolderMonitoring()
+    
+    print("MovementAnimationHandler: Initialized")
+end
+
+function MovementAnimationHandler:_onCharacterAdded(character: Model?)
+    if character == self.character then return end
+    
+    -- Clean up previous character
+    self:_cleanup()
+    
+    -- Setup new character
+    self.character = character
+    if not character then 
+        self.isReady = false
+        return 
+    end
+    
+    -- Wait for required components
+    task.spawn(function()
+        local humanoid = character:WaitForChild("Humanoid", 10)
+        local humanoidRootPart = character:WaitForChild("HumanoidRootPart", 10)
+        
+        if not humanoid or not humanoidRootPart then
+            warn("MovementAnimationHandler: Failed to find required character components")
+            return
+        end
+        
+        self.humanoid = humanoid
+        self.humanoidRootPart = humanoidRootPart
+        self.lastPosition = humanoidRootPart.Position
+        
+        self:_setupAnimator(humanoid)
+        self:_setupCharacterConnections()
+        self:_checkAnimationFolder()
+        
+        -- Handle character removal
+        self.characterConnections[#self.characterConnections + 1] = character.AncestryChanged:Connect(function()
+            if not character.Parent then
+                self:_onCharacterAdded(nil)
+            end
+        end)
+        
+        -- Replace default animations
+        self:_replaceDefaultAnimations()
+    end)
+end
+
+function MovementAnimationHandler:_setupAnimator(humanoid: Humanoid)
+    -- Wait for or create animator
     local animator = humanoid:FindFirstChildOfClass("Animator")
     if not animator then
         animator = Instance.new("Animator")
         animator.Name = "Animator"
         animator.Parent = humanoid
+        task.wait() -- Let the animator initialize
     end
-    currentAnimator = animator
-    return currentAnimator
+    self.animator = animator
 end
 
-local function clearTracks()
-    for _, t in pairs(trackCache) do
-        pcall(function()
-            if t.IsPlaying then t:Stop(0) end
-            t:Destroy()
-        end)
+function MovementAnimationHandler:_setupCharacterConnections()
+    if not self.humanoid then return end
+    
+    -- Clear existing connections
+    for _, connection in ipairs(self.characterConnections) do
+        if connection.Connected then
+            connection:Disconnect()
+        end
     end
-    trackCache = {}
-    CurrentAnimation = nil
-    NextAnimation = nil
-    lastDesired = nil
-    if OverrideTrack and OverrideTrack.IsPlaying then
-        pcall(function() OverrideTrack:Stop(0) end)
+    self.characterConnections = {}
+    
+    -- Track movement changes
+    self.characterConnections[#self.characterConnections + 1] = self.humanoid:GetPropertyChangedSignal("MoveDirection"):Connect(function()
+        -- Small delay to let movement settle
+        task.wait(0.05)
+        self:_updateLocomotion()
+    end)
+    
+    -- Track jump state - more immediate response needed
+    self.characterConnections[#self.characterConnections + 1] = self.humanoid:GetPropertyChangedSignal("Jump"):Connect(function()
+        -- Immediate update for jump responsiveness
+        self:_updateLocomotion()
+    end)
+    
+    -- Track state changes - this is crucial for jump/fall detection
+    self.characterConnections[#self.characterConnections + 1] = self.humanoid.StateChanged:Connect(function(oldState, newState)
+        -- Immediate update for state changes, especially jumping/falling
+        self:_updateLocomotion()
+        
+        -- Additional update after a brief delay to catch velocity changes
+        task.wait(0.1)
+        self:_updateLocomotion()
+    end)
+    
+    -- Track humanoid died state
+    self.characterConnections[#self.characterConnections + 1] = self.humanoid.Died:Connect(function()
+        self:_cleanup()
+    end)
+end
+
+function MovementAnimationHandler:_replaceDefaultAnimations()
+    if not self.humanoid then return end
+    
+    -- Remove default Roblox animations
+    local function removeDefaultAnimations()
+        local animate = self.character:FindFirstChild("Animate")
+        if animate then
+            animate:Destroy()
+        end
+        
+        -- Stop any existing animations
+        for _, track in pairs(self.humanoid:GetPlayingAnimationTracks()) do
+            track:Stop(0)
+        end
     end
-    OverrideTrack = nil
-    for track, conn in pairs(trackStoppedConns) do
-        if conn.Connected then conn:Disconnect() end
-        trackStoppedConns[track] = nil
+    
+    removeDefaultAnimations()
+end
+
+function MovementAnimationHandler:_setupAnimationFolderMonitoring()
+    -- Monitor for animation folder changes
+    local function onTagged(instance)
+        self.animationFolder = instance
+        self:_checkAnimationFolder()
     end
-    -- stop/clear overlays
-    for ch, tr in pairs(overlayTracks) do
-        pcall(function()
-            if tr.IsPlaying then tr:Stop(0) end
-        end)
-        overlayTracks[ch] = nil
+    
+    local function onUntagged(instance)
+        if instance == self.animationFolder then
+            self.animationFolder = nil
+            self.isReady = false
+        end
     end
-    for track, conn in pairs(overlayStoppedConns) do
-        if conn.Connected then conn:Disconnect() end
-        overlayStoppedConns[track] = nil
+
+    -- Prefer tag-specific signals for correctness
+    CollectionService:GetInstanceAddedSignal(ANIM_TAG):Connect(onTagged)
+    CollectionService:GetInstanceRemovedSignal(ANIM_TAG):Connect(onUntagged)
+    
+    -- Check existing tagged instances
+    for _, instance in ipairs(CollectionService:GetTagged(ANIM_TAG)) do
+        onTagged(instance)
     end
 end
 
-local function onCharacterChanged(newChar: Model?)
-    if newChar == currentCharacter then return end
-    currentCharacter = newChar
-    currentHumanoid = nil
-    currentAnimator = nil
-    clearTracks()
+function MovementAnimationHandler:_checkAnimationFolder()
+    self.animationFolder = CollectionService:GetTagged(ANIM_TAG)[1]
+    if self.animationFolder and #self.animationFolder:GetChildren() > 0 then
+        self.isReady = true
+        print("MovementAnimationHandler: Animation folder ready with", #self.animationFolder:GetChildren(), "animations")
+    else
+        self.isReady = false
+        if not self.animationFolder then
+            warn("MovementAnimationHandler: No animation folder found with tag:", ANIM_TAG)
+        else
+            warn("MovementAnimationHandler: Animation folder is empty")
+        end
+    end
 end
 
-local function resolveHumanoid(): Humanoid?
-    local char = Player.Character
-    if not char or not char:IsA("Model") then
-        onCharacterChanged(nil)
+function MovementAnimationHandler:_cleanup()
+    -- Stop all animations
+    for _, track in pairs(self.trackCache) do
+        if track and track.IsPlaying then
+            track:Stop(0)
+        end
+        if track then
+            track:Destroy()
+        end
+    end
+    
+    -- Clear connections
+    for _, connection in pairs(self.connections) do
+        if connection and connection.Connected then
+            connection:Disconnect()
+        end
+    end
+    
+    for _, connection in pairs(self.overlayConnections) do
+        if connection and connection.Connected then
+            connection:Disconnect()
+        end
+    end
+    
+    for _, connection in ipairs(self.characterConnections) do
+        if connection and connection.Connected then
+            connection:Disconnect()
+        end
+    end
+    
+    -- Reset state
+    self.trackCache = {}
+    self.connections = {}
+    self.overlayConnections = {}
+    self.characterConnections = {}
+    self.state = {
+        current = nil,
+        override = nil,
+        overlays = {},
+        lastDesired = nil,
+        lastMoveVector = Vector3.new(),
+    }
+    self.isReady = false
+    self.lastPosition = nil
+    self.velocity = Vector3.new()
+end
+
+function MovementAnimationHandler:_getAnimationTrack(animationName: string): AnimationTrack?
+    -- Check cache first
+    if self.trackCache[animationName] then
+        local track = self.trackCache[animationName]
+        if track and track.Parent then
+            return track
+        else
+            -- Clean up invalid cache entry
+            self.trackCache[animationName] = nil
+        end
+    end
+    
+    -- Validate requirements
+    if not self.animator or not self.animationFolder then
         return nil
     end
-    if char ~= currentCharacter then
-        onCharacterChanged(char)
-    end
-    local h = char:FindFirstChildOfClass("Humanoid")
-    if not h or h.Health <= 0 then
-        currentHumanoid = nil
-        currentAnimator = nil
+    
+    -- Find animation
+    local animationObject = self.animationFolder:FindFirstChild(animationName)
+    if not animationObject or not animationObject:IsA("Animation") then
+        warn("MovementAnimationHandler: Animation not found:", animationName)
         return nil
     end
-    if h ~= currentHumanoid then
-        currentHumanoid = h
-        currentAnimator = nil
-        clearTracks()
+    
+    -- Load and cache track
+    local success, track = pcall(function()
+        return self.animator:LoadAnimation(animationObject)
+    end)
+    
+    if not success or not track then
+        warn("MovementAnimationHandler: Failed to load animation:", animationName)
+        return nil
     end
-    return currentHumanoid
-end
-
-local function getTrack(name: string): AnimationTrack?
-    if trackCache[name] then
-        return trackCache[name]
-    end
-    local humanoid = resolveHumanoid()
-    if not humanoid then return nil end
-
-    local animator = ensureAnimator(humanoid)
-    if not animator then return nil end
-
-    local folder = getAnimFolder()
-    if not folder then return nil end
-
-    local anim = folder:FindFirstChild(name)
-    if not anim or not anim:IsA("Animation") then return nil end
-
-    local track = animator:LoadAnimation(anim)
-    -- Defaults; can be overridden per-play via event
-    track.Looped = true
-    track.Priority = Enum.AnimationPriority.Movement
-    trackCache[name] = track
+    
+    self.trackCache[animationName] = track
     return track
 end
 
-local function applyTrackProps(track: AnimationTrack, req: PlayRequest?)
-    if not req then return end
-    if req.priority then
-        track.Priority = req.priority
+function MovementAnimationHandler:_applyTrackProperties(track: AnimationTrack, request: PlayRequest)
+    if request.priority then
+        track.Priority = request.priority
     end
-    if req.looped ~= nil then
-        track.Looped = req.looped
+    
+    if request.looped ~= nil then
+        track.Looped = request.looped
     end
-    if req.speed then
-        pcall(function() track:AdjustSpeed(req.speed :: number) end)
+    
+    -- Apply speed and weight after starting if needed
+    if request.speed and track.IsPlaying then
+        track:AdjustSpeed(request.speed)
     end
-    if req.weight then
-        pcall(function() track:AdjustWeight(req.weight :: number, req.fade or 0.0) end)
+    
+    if request.weight and track.IsPlaying then
+        track:AdjustWeight(request.weight, request.fade or DEFAULT_FADE_TIME)
     end
 end
 
-local function ensureStoppedConn(track: AnimationTrack)
-    if trackStoppedConns[track] then return end
-    trackStoppedConns[track] = track.Stopped:Connect(function()
-        if OverrideTrack == track then
-            OverrideTrack = nil
-        end
-        local conn = trackStoppedConns[track]
-        if conn and conn.Connected then conn:Disconnect() end
-        trackStoppedConns[track] = nil
-    end)
-end
-
-local function playOverride(req: PlayRequest)
-    local name = req.animationName
-    if not name or type(name) ~= "string" then return end
-    local track = getTrack(name)
+function MovementAnimationHandler:_playExclusiveAnimation(request: PlayRequest)
+    local track = self:_getAnimationTrack(request.animationName)
     if not track then return end
-
-    applyTrackProps(track, req)
-    local fade = req.fade or 0.15
-
-    -- ensure exclusive actions override base by default
-    if not req.priority then
+    
+    -- Set default priority for exclusive animations
+    if not request.priority then
         track.Priority = Enum.AnimationPriority.Action
     end
-
-    if CurrentAnimation and CurrentAnimation ~= track and CurrentAnimation.IsPlaying then
-        pcall(function() CurrentAnimation:Stop(fade) end)
+    
+    local fadeTime = request.fade or DEFAULT_FADE_TIME
+    
+    -- Stop current animations
+    if self.state.current and self.state.current ~= track and self.state.current.IsPlaying then
+        self.state.current:Stop(fadeTime)
     end
-    if OverrideTrack and OverrideTrack ~= track and OverrideTrack.IsPlaying then
-        pcall(function() OverrideTrack:Stop(fade) end)
+    
+    if self.state.override and self.state.override ~= track and self.state.override.IsPlaying then
+        self.state.override:Stop(fadeTime)
     end
-
-    OverrideTrack = track
-    CurrentAnimation = track
-
+    
+    -- Apply properties before playing
+    self:_applyTrackProperties(track, request)
+    
+    -- Play new animation
+    self.state.override = track
+    self.state.current = track
+    
     if not track.IsPlaying then
-        -- Play(transitionTime, weight, speed)
-        local weight = req.weight or 1.0
-        local speed = req.speed or 1.0
-        pcall(function() track:Play(fade, weight, speed) end)
+        local weight = request.weight or 1.0
+        local speed = request.speed or 1.0
+        track:Play(fadeTime, weight, speed)
     end
-
-    ensureStoppedConn(track)
+    
+    -- Setup stopped connection
+    if not self.connections[track] then
+        self.connections[track] = track.Stopped:Connect(function()
+            if self.state.override == track then
+                self.state.override = nil
+            end
+            
+            -- Clean up connection
+            local connection = self.connections[track]
+            if connection and connection.Connected then
+                connection:Disconnect()
+            end
+            self.connections[track] = nil
+        end)
+    end
 end
 
-local function ensureOverlayStoppedConn(track: AnimationTrack, channel: string)
-    if overlayStoppedConns[track] then return end
-    overlayStoppedConns[track] = track.Stopped:Connect(function()
-        -- remove from channel map when it ends
-        for ch, tr in pairs(overlayTracks) do
-            if tr == track then
-                overlayTracks[ch] = nil
-                break
+function MovementAnimationHandler:_playOverlayAnimation(request: PlayRequest)
+    local track = self:_getAnimationTrack(request.animationName)
+    if not track then return end
+    
+    local channel = request.channel or "default"
+    local config = self.channelConfigs[channel] or self.channelConfigs.default
+    
+    -- Set channel-specific priority
+    if not request.priority then
+        track.Priority = config.priority or Enum.AnimationPriority.Action
+    end
+    
+    local fadeTime = request.fade or config.defaultFade or DEFAULT_FADE_TIME
+    
+    -- Stop previous overlay in this channel
+    local previousTrack = self.state.overlays[channel]
+    if previousTrack and previousTrack ~= track and previousTrack.IsPlaying then
+        previousTrack:Stop(fadeTime)
+    end
+    
+    -- Apply properties before playing
+    self:_applyTrackProperties(track, request)
+    
+    -- Play new overlay
+    self.state.overlays[channel] = track
+    
+    if not track.IsPlaying then
+        local weight = request.weight or config.defaultWeight or 1.0
+        local speed = request.speed or 1.0
+        track:Play(fadeTime, weight, speed)
+    end
+    
+    -- Setup stopped connection
+    if not self.overlayConnections[track] then
+        self.overlayConnections[track] = track.Stopped:Connect(function()
+            -- Remove from overlays
+            for ch, tr in pairs(self.state.overlays) do
+                if tr == track then
+                    self.state.overlays[ch] = nil
+                    break
+                end
             end
+            
+            -- Clean up connection
+            local connection = self.overlayConnections[track]
+            if connection and connection.Connected then
+                connection:Disconnect()
+            end
+            self.overlayConnections[track] = nil
+        end)
+    end
+end
+
+function MovementAnimationHandler:_updateVelocity()
+    if not self.humanoidRootPart then return end
+    
+    -- Use actual velocity from the part instead of calculating from position
+    self.velocity = self.humanoidRootPart.AssemblyLinearVelocity or self.humanoidRootPart.Velocity
+end
+
+function MovementAnimationHandler:_determineDesiredState(): string
+    if not self.humanoid then
+        return "Idle"
+    end
+    
+    -- Update velocity tracking
+    self:_updateVelocity()
+    
+    local hasInput = next(self.pressedKeys) ~= nil
+    local moveDirection = self.humanoid.MoveDirection
+    local isMoving = moveDirection.Magnitude > MOVEMENT_THRESHOLD
+    local humanoidState = self.humanoid:GetState()
+    local isBackWalking = self.pressedKeys[Enum.KeyCode.S] and not self.pressedKeys[Enum.KeyCode.W]
+    local yVelocity = self.velocity.Y
+    
+    -- Prioritize jump/fall states based on humanoid state first, then velocity
+    if humanoidState == Enum.HumanoidStateType.Jumping then
+        return "Jump"
+    elseif humanoidState == Enum.HumanoidStateType.Freefall then
+        -- Use velocity to distinguish between upward momentum and falling
+        if yVelocity > JUMP_HEIGHT_THRESHOLD then
+            return "Jump" -- Still going up from a jump
+        else
+            return "Fall" -- Actually falling down
         end
-        local conn = overlayStoppedConns[track]
-        if conn and conn.Connected then conn:Disconnect() end
-        overlayStoppedConns[track] = nil
+    elseif humanoidState == Enum.HumanoidStateType.Flying or humanoidState == Enum.HumanoidStateType.FallingDown then
+        return "Fall"
+    end
+    
+    -- Only check for ground-based movement if we're in a grounded state
+    if humanoidState == Enum.HumanoidStateType.Running or 
+       humanoidState == Enum.HumanoidStateType.RunningNoPhysics or
+       humanoidState == Enum.HumanoidStateType.None or
+       (humanoidState == Enum.HumanoidStateType.Landed and yVelocity < JUMP_HEIGHT_THRESHOLD) then
+        
+        if isBackWalking and (hasInput or isMoving) then
+            return "BackWalk"
+        elseif hasInput or isMoving then
+            return "Walk"
+        else
+            return "Idle"
+        end
+    end
+    
+    -- Default fallback
+    return "Idle"
+end
+
+function MovementAnimationHandler:_updateLocomotion()
+    -- Don't run if not ready
+    if not self.isReady or not self.humanoid or not self.animator then
+        return
+    end
+    
+    -- Check if override is still playing
+    if self.state.override and self.state.override.IsPlaying then
+        self.state.current = self.state.override
+        return
+    end
+    
+    -- Clear finished override
+    if self.state.override and not self.state.override.IsPlaying then
+        self.state.override = nil
+    end
+    
+    -- Determine desired state
+    local desiredState = self:_determineDesiredState()
+    
+    -- Store current move vector for comparison
+    local currentMoveVector = self.humanoid.MoveDirection
+    self.state.lastMoveVector = self.state.lastMoveVector or Vector3.new()
+    
+    -- More sensitive change detection for jump/fall states
+    local isJumpFallState = desiredState == "Jump" or desiredState == "Fall"
+    local wasJumpFallState = self.state.lastDesired == "Jump" or self.state.lastDesired == "Fall"
+    
+    -- Check if we need to change animation
+    local shouldChange = desiredState ~= self.state.lastDesired or
+                         not self.state.current or 
+                         not self.state.current.IsPlaying or
+                         (isJumpFallState or wasJumpFallState) or -- Always update for jump/fall transitions
+                         (currentMoveVector - self.state.lastMoveVector).Magnitude > 0.1
+    
+    if not shouldChange then
+        return
+    end
+    
+    self.state.lastDesired = desiredState
+    self.state.lastMoveVector = currentMoveVector
+    
+    -- Get animation name
+    local animationName = LOCOMOTION_ANIMATIONS[desiredState] or desiredState
+    local track = self:_getAnimationTrack(animationName)
+    if not track then 
+        return 
+    end
+    
+    -- Configure track based on state
+    if desiredState == "Jump" then
+        track.Looped = false
+        track.Priority = Enum.AnimationPriority.Action
+    elseif desiredState == "Fall" then
+        track.Looped = true
+        track.Priority = Enum.AnimationPriority.Action
+    else
+        track.Looped = true
+        track.Priority = Enum.AnimationPriority.Movement
+    end
+    
+    -- Stop current and play new with appropriate fade times
+    local fadeTime = DEFAULT_FADE_TIME
+    if isJumpFallState then
+        fadeTime = 0.05 -- Faster transitions for jump/fall
+    end
+    
+    if self.state.current and self.state.current ~= track and self.state.current.IsPlaying then
+        self.state.current:Stop(fadeTime)
+    end
+    
+    self.state.current = track
+    
+    if not track.IsPlaying then
+        track:Play(fadeTime, 1.0, 1.0)
+    end
+end
+
+function MovementAnimationHandler:_setupInputHandling()
+    local function isTyping(): boolean
+        return UserInputService:GetFocusedTextBox() ~= nil
+    end
+    
+    UserInputService.InputBegan:Connect(function(input: InputObject, gameProcessed: boolean)
+        if gameProcessed or isTyping() then return end
+        
+        local keyCode = input.KeyCode
+        if MOVEMENT_KEYS[keyCode] then
+            self.pressedKeys[keyCode] = true
+            -- Force immediate update on input
+            task.wait()
+            self:_updateLocomotion()
+        end
+    end)
+    
+    UserInputService.InputEnded:Connect(function(input: InputObject, gameProcessed: boolean)
+        if gameProcessed then return end
+        
+        local keyCode = input.KeyCode
+        if MOVEMENT_KEYS[keyCode] then
+            self.pressedKeys[keyCode] = nil
+            -- Force immediate update on input end
+            task.wait()
+            self:_updateLocomotion()
+        end
+    end)
+    
+    UserInputService.WindowFocusReleased:Connect(function()
+        -- Clear all pressed keys when window loses focus
+        self.pressedKeys = {}
+        task.wait()
+        self:_updateLocomotion()
     end)
 end
 
-local function playOverlay(req: PlayRequest)
-    local name = req.animationName
-    if not name or type(name) ~= "string" then return end
-    local track = getTrack(name)
-    if not track then return end
-
-    -- overlays use channel-configured priority by default
-    local channel = req.channel or "default"
-    local cfg = ChannelConfig[channel] or ChannelConfig.default
-    if req.priority then
-        track.Priority = req.priority
-    else
-        track.Priority = cfg.priority or Enum.AnimationPriority.Action
-    end
-    applyTrackProps(track, req)
-
-    local fade = req.fade or cfg.defaultFade or 0.15
-
-    local prev = overlayTracks[channel]
-    if prev and prev ~= track and prev.IsPlaying then
-        pcall(function() prev:Stop(fade) end)
-    end
-
-    overlayTracks[channel] = track
-
-    if not track.IsPlaying then
-        local weight = req.weight or cfg.defaultWeight or 1.0
-        local speed = req.speed or 1.0
-        pcall(function() track:Play(fade, weight, speed) end)
-    end
-
-    ensureOverlayStoppedConn(track, channel)
-end
-
--- Choose PreAnimation if present, else fall back to RenderStepped
-local driveSignal = (RunService :: any).PreAnimation or RunService.RenderStepped
-
-driveSignal:Connect(function()
-    -- Custom character systems: always check Player.Character/Humanoid on tick
-    local humanoid = resolveHumanoid()
-    if not humanoid then
-        if CurrentAnimation and CurrentAnimation.IsPlaying then
-            CurrentAnimation:Stop(0.12)
+function MovementAnimationHandler:_startAnimationLoop()
+    -- Use RenderStepped for better responsiveness
+    RunService.RenderStepped:Connect(function()
+        -- Check animation folder readiness
+        if not self.isReady then
+            self:_checkAnimationFolder()
+            return
         end
-        return
-    end
-
-    -- If an override is active and still playing, keep it (exclusive actions)
-    if OverrideTrack and OverrideTrack.IsPlaying then
-        CurrentAnimation = OverrideTrack
-        return
-    end
-    if OverrideTrack and not OverrideTrack.IsPlaying then
-        OverrideTrack = nil
-    end
-
-    -- Decide desired base state
-    local hasInput = next(pressed) ~= nil
-    local isMoving = humanoid.MoveDirection.Magnitude > 0.05
-    local desired = (hasInput or isMoving) and "Walk" or "Idle"
-    if desired == lastDesired and CurrentAnimation and CurrentAnimation.IsPlaying then
-        return
-    end
-    lastDesired = desired
-
-    local animName = LocomotionMap[desired] or desired
-    local nextTrack = getTrack(animName)
-    if not nextTrack then return end
-    -- Ensure base locomotion defaults
-    nextTrack.Looped = true
-    nextTrack.Priority = Enum.AnimationPriority.Movement
-
-    NextAnimation = nextTrack
-
-    if CurrentAnimation and CurrentAnimation ~= NextAnimation then
-        pcall(function() CurrentAnimation:Stop(0.15) end)
-    end
-
-    CurrentAnimation = NextAnimation
-    local cur = CurrentAnimation
-    if cur and not cur.IsPlaying then
-        pcall(function() cur:Play(0.15, 1.0, 1.0) end)
-    end
-end)
-
--- Movement-focused input handling; updates the pressed state used in locomotion
-local function isTyping()
-    return UserInputService:GetFocusedTextBox() ~= nil
+        
+        -- Update locomotion
+        self:_updateLocomotion()
+    end)
 end
 
-UserInputService.InputBegan:Connect(function(input: InputObject, gameProcessedEvent: boolean)
-    if gameProcessedEvent or isTyping() then return end
-    local key = input.KeyCode
-    if CharacterStates[key] then
-        pressed[key] = true
-    end
-end)
+function MovementAnimationHandler:_setupBindableEvents()
+    -- Main play event
+    BindableEventHelper.CreateBindableEvent("MovementAnimation:Play").Event:Connect(function(request)
+        self:playAnimation(request)
+    end)
+    
+    -- Control event
+    BindableEventHelper.CreateBindableEvent("MovementAnimation:Control").Event:Connect(function(request)
+        self:controlAnimation(request)
+    end)
+    
+    -- Configuration event
+    BindableEventHelper.CreateBindableEvent("MovementAnimation:Configure").Event:Connect(function(config)
+        self:configure(config)
+    end)
+    
+    -- Backward compatibility events
+    BindableEventHelper.CreateBindableEvent("PlayAnimation").Event:Connect(function(request)
+        self:playAnimation(request)
+    end)
+    
+    BindableEventHelper.CreateBindableEvent("ControlAnimation").Event:Connect(function(request)
+        self:controlAnimation(request)
+    end)
+    
+    BindableEventHelper.CreateBindableEvent("ConfigureAnimation").Event:Connect(function(config)
+        self:configure(config)
+    end)
+end
 
-UserInputService.InputEnded:Connect(function(input: InputObject, gameProcessedEvent: boolean)
-    if gameProcessedEvent then return end
-    local key = input.KeyCode
-    if CharacterStates[key] then
-        pressed[key] = nil
+-- Public API
+function MovementAnimationHandler:playAnimation(request: PlayRequest)
+    if not request or not request.animationName then
+        warn("MovementAnimationHandler: Invalid play request")
+        return
     end
-end)
-
-UserInputService.WindowFocusReleased:Connect(function()
-    -- clear all pressed keys when focus is lost to avoid stuck movement state
-    for k in pairs(pressed) do
-        pressed[k] = nil
-    end
-end)
-
--- Movement-specific bindable API (non-generic names) with backward compatibility
-local function handlePlay(reqTbl: { animationName: string, priority: Enum.AnimationPriority?, fade: number?, looped: boolean?, speed: number?, weight: number?, overlay: boolean?, mode: string?, channel: string? })
-    local req: PlayRequest = {
-        animationName = reqTbl.animationName,
-        priority = reqTbl.priority,
-        fade = reqTbl.fade,
-        looped = reqTbl.looped,
-        speed = reqTbl.speed,
-        weight = reqTbl.weight,
-        overlay = reqTbl.overlay,
-        mode = reqTbl.mode,
-        channel = reqTbl.channel,
-    }
-    local isOverlay = (req.overlay == true) or (req.mode == "overlay")
+    
+    local isOverlay = request.overlay == true or request.mode == "overlay"
+    
     if isOverlay then
-        playOverlay(req)
+        self:_playOverlayAnimation(request)
     else
-        playOverride(req)
+        self:_playExclusiveAnimation(request)
     end
 end
 
-local function stopExclusive(fade: number?)
-    local tr = OverrideTrack
-    if tr and tr.IsPlaying then
-        pcall(function() tr:Stop(fade or 0.15) end)
-    end
-    OverrideTrack = nil
-end
-
-local function stopOverlay(channel: string?, fade: number?)
-    if channel then
-        local tr = overlayTracks[channel]
-        if tr and tr.IsPlaying then
-            local chanCfg = ChannelConfig[channel] or ChannelConfig.default
-            local resolvedFade = fade or (chanCfg and chanCfg.defaultFade) or 0.15
-            pcall(function() tr:Stop(resolvedFade) end)
-        end
-        overlayTracks[channel] = nil
-    else
-        for ch, tr in pairs(overlayTracks) do
-            if tr.IsPlaying then
-                local cfg = ChannelConfig[ch] or ChannelConfig.default
-                pcall(function() tr:Stop(fade or (cfg and cfg.defaultFade) or 0.15) end)
-            end
-            overlayTracks[ch] = nil
-        end
-    end
-end
-
-local function stopAll(fade: number?)
-    stopExclusive(fade)
-    stopOverlay(nil, fade)
-end
-
--- Movement-specific events
-BindableEventHelper.CreateBindableEvent("MovementAnimation:Play").Event:Connect(handlePlay)
-BindableEventHelper.CreateBindableEvent("MovementAnimation:Control").Event:Connect(function(req: { action: string, channel: string?, fade: number? })
-    local action = string.lower(req.action or "")
+function MovementAnimationHandler:controlAnimation(request: { action: string, channel: string?, fade: number? })
+    local action = string.lower(request.action or "")
+    local fadeTime = request.fade or DEFAULT_FADE_TIME
+    
     if action == "stop" then
-        if req.channel then
-            stopOverlay(req.channel, req.fade)
+        if request.channel then
+            self:stopOverlay(request.channel, fadeTime)
         else
-            stopExclusive(req.fade)
+            self:stopExclusive(fadeTime)
         end
     elseif action == "stopoverlay" then
-        stopOverlay(req.channel, req.fade)
+        self:stopOverlay(request.channel, fadeTime)
     elseif action == "stopexclusive" then
-        stopExclusive(req.fade)
+        self:stopExclusive(fadeTime)
     elseif action == "stopall" then
-        stopAll(req.fade)
+        self:stopAll(fadeTime)
     end
-end)
+end
 
-BindableEventHelper.CreateBindableEvent("MovementAnimation:Configure").Event:Connect(function(cfg: { locomotion: { [string]: string }?, channels: { [string]: ChannelCfg }? })
-    if cfg.locomotion then
-        for k, v in pairs(cfg.locomotion) do
-            if type(k) == "string" and type(v) == "string" then
-                LocomotionMap[k] = v
+function MovementAnimationHandler:stopExclusive(fadeTime: number?)
+    local fade = fadeTime or DEFAULT_FADE_TIME
+    
+    if self.state.override and self.state.override.IsPlaying then
+        self.state.override:Stop(fade)
+    end
+    
+    self.state.override = nil
+end
+
+function MovementAnimationHandler:stopOverlay(channel: string?, fadeTime: number?)
+    local fade = fadeTime or DEFAULT_FADE_TIME
+    
+    if channel then
+        local track = self.state.overlays[channel]
+        if track and track.IsPlaying then
+            track:Stop(fade)
+        end
+        self.state.overlays[channel] = nil
+    else
+        -- Stop all overlays
+        for ch, track in pairs(self.state.overlays) do
+            if track and track.IsPlaying then
+                track:Stop(fade)
+            end
+            self.state.overlays[ch] = nil
+        end
+    end
+end
+
+function MovementAnimationHandler:stopAll(fadeTime: number?)
+    local fade = fadeTime or DEFAULT_FADE_TIME
+    
+    self:stopExclusive(fade)
+    self:stopOverlay(nil, fade)
+end
+
+function MovementAnimationHandler:configure(config: {
+    locomotion: { [string]: string }?,
+    channels: { [string]: ChannelConfig }?
+})
+    if config.locomotion then
+        for state, animationName in pairs(config.locomotion) do
+            if type(state) == "string" and type(animationName) == "string" then
+                LOCOMOTION_ANIMATIONS[state] = animationName
             end
         end
     end
-    if cfg.channels then
-        for name, c in pairs(cfg.channels) do
-            if type(name) == "string" and type(c) == "table" then
-                ChannelConfig[name] = {
-                    priority = c.priority or ChannelConfig[name] and ChannelConfig[name].priority or ChannelConfig.default.priority,
-                    defaultFade = c.defaultFade or ChannelConfig[name] and ChannelConfig[name].defaultFade or ChannelConfig.default.defaultFade,
-                    defaultWeight = c.defaultWeight or ChannelConfig[name] and ChannelConfig[name].defaultWeight or ChannelConfig.default.defaultWeight,
+    
+    if config.channels then
+        for name, channelConfig in pairs(config.channels) do
+            if type(name) == "string" and type(channelConfig) == "table" then
+                self.channelConfigs[name] = {
+                    priority = channelConfig.priority or (self.channelConfigs[name] and self.channelConfigs[name].priority) or self.channelConfigs.default.priority,
+                    defaultFade = channelConfig.defaultFade or (self.channelConfigs[name] and self.channelConfigs[name].defaultFade) or self.channelConfigs.default.defaultFade,
+                    defaultWeight = channelConfig.defaultWeight or (self.channelConfigs[name] and self.channelConfigs[name].defaultWeight) or self.channelConfigs.default.defaultWeight,
                 }
             end
         end
     end
-end)
+end
 
--- Backward compatibility: still respond to old generic event names if used anywhere else
-BindableEventHelper.CreateBindableEvent("PlayAnimation").Event:Connect(handlePlay)
-BindableEventHelper.CreateBindableEvent("ControlAnimation").Event:Connect(function(req: { action: string, channel: string?, fade: number? })
-    -- delegate to movement control (ensure event exists)
-    BindableEventHelper.CreateBindableEvent("MovementAnimation:Control"):Fire(req)
-end)
-BindableEventHelper.CreateBindableEvent("ConfigureAnimation").Event:Connect(function(cfg)
-    BindableEventHelper.CreateBindableEvent("MovementAnimation:Configure"):Fire(cfg)
-end)
+-- Debug function
+function MovementAnimationHandler:getDebugInfo()
+    return {
+        isReady = self.isReady,
+        hasCharacter = self.character ~= nil,
+        hasHumanoid = self.humanoid ~= nil,
+        hasAnimator = self.animator ~= nil,
+        hasAnimationFolder = self.animationFolder ~= nil,
+        currentAnimation = self.state.current and self.state.current.Animation.Name or "None",
+        overrideAnimation = self.state.override and self.state.override.Animation.Name or "None",
+        lastDesired = self.state.lastDesired or "None",
+        pressedKeys = self.pressedKeys,
+        animationCount = self.animationFolder and #self.animationFolder:GetChildren() or 0,
+    }
+end
+
+-- Initialize the system
+local animationHandler = MovementAnimationHandler.new()
+
+-- Export for debugging/external access
+_G.MovementAnimationHandler = animationHandler
+
+return animationHandler

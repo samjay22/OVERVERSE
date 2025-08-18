@@ -10,12 +10,21 @@ type Animation = string
 type PackAnimationKey = string -- "PackName:Animation" combined key
 
 local packs: {[PackName]: {[Animation]: string}} = {
+    Default = {
+        Idle = "109703334185897",
+        Walk = "77410537283170",
+        Jump = "91709971970716",
+        BackWalk = "85307657699318",
+        Fall = "77410537283170",
+        M1 = "77031697494140",
+        Special = "131251175705402"
+    },
     Rem = {
         Idle = "109703334185897",
         Walk = "77410537283170",
-        Jump = "77410537283170",
+        Jump = "91709971970716",
         BackWalk = "85307657699318",
-        Fall = "77410537283170",
+        Fall = "91709971970716",
         M1 = "77031697494140",
         Special = "131251175705402"
     },

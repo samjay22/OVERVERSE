@@ -44,7 +44,10 @@ function InputComponent.Initialize(characterData: CharacterRef)
 		if typeof(current) ~= "table" then
 			characterData.StateManager:Set("ActiveKeys", table.freeze({}))
 		else
-			characterData.StateManager:Set("ActiveKeys", table.freeze(current))
+			-- Only freeze if not already frozen
+			if not table.isfrozen(current) then
+				characterData.StateManager:Set("ActiveKeys", table.freeze(current))
+			end
 		end
 	end
 

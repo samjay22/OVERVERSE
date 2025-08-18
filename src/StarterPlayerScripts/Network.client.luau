@@ -6,12 +6,19 @@ local CoreRemote : RemoteEvent = game.ReplicatedStorage:WaitForChild("Remotes"):
 local Player : Player = game.Players.LocalPlayer
 
 CoreRemote.OnClientEvent:Connect(function(data)
-    local animFolder : Folder = CollectionService:GetTagged(tostring(Player.UserId) .. "_Animations")[1]
+    print("Received animation data:", data)
+    local animFolders = CollectionService:GetTagged(tostring(Player.UserId) .. "_Animations")
+    local animFolder : Folder? = animFolders and animFolders[1] :: Folder?
     local animName : string = data[1]
 
-    repeat task.wait() until #animFolder:GetChildren() > 0
-    if not animFolder or #animFolder:GetChildren() == 0 then
+    if not animFolder then
         warn("No animation folder found for player", Player.Name)
+        return
+    end
+
+    repeat task.wait() until #animFolder:GetChildren() > 0
+    if #animFolder:GetChildren() == 0 then
+        warn("Animation folder is empty for player", Player.Name)
         return
     end
 
@@ -31,6 +38,7 @@ CoreRemote.OnClientEvent:Connect(function(data)
     local animator : Animator? = humanoid:FindFirstChildOfClass("Animator")
     if animator then
         local clip : AnimationTrack = animator:LoadAnimation(myAnimClip)
+        print("Loaded animation clip:", clip)
         clip.Looped = true
         clip:Play()
     end
