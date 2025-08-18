@@ -42,4 +42,8 @@ end
 function Charge.OnCancel(ctx: SharedAbilityContext, reason: string?)
 end
 
+function Charge.getAbilityClassId()
+	return nil
+end
+
 return Charge

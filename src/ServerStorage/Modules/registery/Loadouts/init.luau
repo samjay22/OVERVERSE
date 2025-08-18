@@ -69,11 +69,12 @@ function LoadoutRegistry.Get(assetKey: string): Loadout
         return loadout
     end
     
-    -- Return default loadout if not found
+    -- Return default loadout if not found (match Loadout type)
     return {
-        primaryAttack = "Default",
+        primaryAttacks = {},
         actives = {},
         passive = nil,
+        animationPack = "Default",
     }
 end
 

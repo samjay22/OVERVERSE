@@ -26,4 +26,14 @@ end
 function Block.OnCancel(ctx: SharedAbilityContext, reason: string?)
 end
 
+function Block.getAbilityInputRequired()
+	-- Default defensive block on M2 unless player remaps
+	return Enum.UserInputType.MouseButton3
+end
+
+function Block.getAbilityClassId()
+	-- nil means available to any class
+	return nil
+end
+
 return Block

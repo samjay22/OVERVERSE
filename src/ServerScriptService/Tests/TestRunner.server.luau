@@ -106,10 +106,7 @@ local function runPerformanceTests()
             name = "Character",
             loader = function() return require(game.ServerStorage.Modules.Entities.Character) end
         },
-        {
-            name = "AbilityRegistry", 
-            loader = function() return require(game.ServerStorage.Modules.registery.Abilities) end
-        },
+    -- Ability registry removed
         {
             name = "StateManager",
             loader = function() return require(game.ServerStorage.Modules.Core.StateManager) end
@@ -167,21 +164,17 @@ local function runRegistryTests()
     log("INFO", "Loading Registry system tests...")
     
     -- Test that registries can be loaded
-    local AbilityRegistry = require(game.ServerStorage.Modules.registery.ImprovedAbilityRegistry)
     local EffectRegistry = require(game.ServerStorage.Modules.registery.Effects)
     local LoadoutRegistry = require(game.ServerStorage.Modules.registery.Loadouts)
     
-    assert(AbilityRegistry ~= nil, "AbilityRegistry should load")
     assert(EffectRegistry ~= nil, "EffectRegistry should load")
     assert(LoadoutRegistry ~= nil, "LoadoutRegistry should load")
     
     -- Test basic registry functionality
-    assert(typeof(AbilityRegistry.GetAll) == "function", "AbilityRegistry should have GetAll method")
     assert(typeof(LoadoutRegistry.Get) == "function", "LoadoutRegistry should have Get method")
     
     -- Test that registries return proper data structures
-    local abilities = AbilityRegistry.GetAll()
-    assert(typeof(abilities) == "table", "GetAll should return a table")
+    -- Ability registry removed
     
     log("PASS", "Registry system basic validation passed")
 end
@@ -192,13 +185,8 @@ local function runIntegrationTests()
     
     -- Test that core systems can work together
     local Character = require(game.ServerStorage.Modules.Entities.Character)
-    local AbilityRegistry = require(game.ServerStorage.Modules.registery.ImprovedAbilityRegistry)
-    
     local characterInstance = Character.New()
-    local abilities = AbilityRegistry.GetAll()
-    
-    -- Verify they can interact without errors
-    assert(characterInstance ~= nil and abilities ~= nil, "Core systems should be loadable together")
+    assert(characterInstance ~= nil, "Character system should be loadable")
     
     log("PASS", "System integration basic validation passed")
 end

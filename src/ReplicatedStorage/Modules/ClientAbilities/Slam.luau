@@ -38,4 +38,13 @@ end
 function Slam.OnCancel(ctx: SharedAbilityContext, reason: string?)
 end
 
+function Slam.getAbilityInputRequired()
+	-- Default mapping: V key
+	return Enum.KeyCode.V
+end
+
+function Slam.getAbilityClassId()
+	return nil
+end
+
 return Slam

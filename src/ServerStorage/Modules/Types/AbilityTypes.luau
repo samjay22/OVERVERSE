@@ -6,7 +6,7 @@ local Enums = require(ReplicatedStorage.Modules.Types.Enums)
 
 -- Core ability types
 -- Use broad string ID to align with registry keys and ease authoring
-export type AbilityId = string
+export type AbilityId = string | (Enum.UserInputType)
 export type AbilityType = Enums.AbilityType
 export type AbilityTarget = Enums.AbilityTarget
 
@@ -65,13 +65,23 @@ export type ActiveAbilityDef = BaseAbilityDef & {
 	interruptible: boolean?,
 }
 
+-- Active ability definition
+export type PrimaryAttackDef = BaseAbilityDef & {
+	type: "Primary",
+	-- No serverActivate: client-authoritative with server validation elsewhere
+	clientPreview: ((context: AbilityContext) -> boolean)?,
+	range: number?,
+	radius: number?,
+	castTime: number?,
+	channelTime: number?,
+	interruptible: boolean?,
+}
+
 -- Passive ability definition  
 export type PassiveAbilityDef = BaseAbilityDef & {
 	type: "Passive",
-	onEquip: ((context: AbilityContext) -> ())?,
-	onUnequip: ((context: AbilityContext) -> ())?,
-	onTick: ((context: AbilityContext, deltaTime: number) -> ())?,
-	modifiers: {[string]: number}?,
+	onActivate: (context: AbilityContext) -> AbilityResult,
+	onDeactivate: (context: AbilityContext) -> AbilityResult,
 }
 
 -- Toggle ability definition
@@ -88,7 +98,7 @@ export type ToggleAbilityDef = BaseAbilityDef & {
 export type AbilityDef = {
 	-- Base fields (always present)
 	id: AbilityId,
-	type: "Active" | "Passive" | "Toggle",
+	type: "Active" | "Passive" | "Toggle" | "Primary",
 	name: string,
 	description: string,
 	targetType: AbilityTarget,
@@ -134,7 +144,7 @@ export type SimpleAbilityDef = {
 -- Legacy compatibility types
 export type AnyAbilityDef = {
 	id: AbilityId,
-	kind: "Active" | "Passive",
+	kind: "Active" | "Passive" | "Primary",
 	name: string,
 	description: string?,
 	cooldown: number?,
@@ -142,9 +152,10 @@ export type AnyAbilityDef = {
 }
 
 export type Loadout = {
-	primaryAttack: string?,
+	primaryAttacks: {AbilityId},
 	actives: {AbilityId},
 	passive: AbilityId?,
+	animationPack: string?,
 }
 
 export type PerCharacterAbilityState = {

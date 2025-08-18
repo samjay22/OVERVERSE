@@ -50,13 +50,14 @@ function NetworkManager.New(): INetworkManager
 	self._connections = {} :: {RBXScriptConnection}
 	
 	-- Create remotes folder if it doesn't exist
-	local remotesFolder = ReplicatedStorage:FindFirstChild("Remotes")
-	if not remotesFolder then
-		remotesFolder = Instance.new("Folder")
-		remotesFolder.Name = "Remotes"
-		remotesFolder.Parent = ReplicatedStorage
+	local remotesFolder: Folder? = ReplicatedStorage:FindFirstChild("Remotes") :: Folder?
+	if not remotesFolder or not remotesFolder:IsA("Folder") then
+		local newFolder = Instance.new("Folder")
+		newFolder.Name = "Remotes"
+		newFolder.Parent = ReplicatedStorage
+		remotesFolder = newFolder
 	end
-	self._remotesFolder = remotesFolder
+	self._remotesFolder = remotesFolder :: any
 	
 	return (self :: any) :: INetworkManager
 end
@@ -67,11 +68,17 @@ function NetworkManager:RegisterRemoteEvent(eventName: string): RemoteEvent
 	if existing then
 		return existing
 	end
-	
-	local remoteEvent = Instance.new("RemoteEvent")
-	remoteEvent.Name = eventName
-	remoteEvent.Parent = self._remotesFolder
-	
+	-- Reuse an existing RemoteEvent in the Remotes folder if present (pre-created elsewhere)
+	local found = (self._remotesFolder :: Folder):FindFirstChild(eventName)
+	local remoteEvent: RemoteEvent
+	if found and found:IsA("RemoteEvent") then
+		remoteEvent = found
+	else
+		remoteEvent = Instance.new("RemoteEvent")
+		remoteEvent.Name = eventName
+		remoteEvent.Parent = (self._remotesFolder :: Folder)
+	end
+    
 	self._remoteEvents[eventName] = remoteEvent
 	
 	-- Connect server handler if one exists
@@ -90,11 +97,17 @@ function NetworkManager:RegisterRemoteFunction(functionName: string): RemoteFunc
 	if existing then
 		return existing
 	end
-	
-	local remoteFunction = Instance.new("RemoteFunction")
-	remoteFunction.Name = functionName
-	remoteFunction.Parent = self._remotesFolder
-	
+	-- Reuse an existing RemoteFunction in the Remotes folder if present
+	local found = (self._remotesFolder :: Folder):FindFirstChild(functionName)
+	local remoteFunction: RemoteFunction
+	if found and found:IsA("RemoteFunction") then
+		remoteFunction = found
+	else
+		remoteFunction = Instance.new("RemoteFunction")
+		remoteFunction.Name = functionName
+		remoteFunction.Parent = (self._remotesFolder :: Folder)
+	end
+    
 	self._remoteFunctions[functionName] = remoteFunction
 	
 	return remoteFunction

@@ -3,7 +3,6 @@
 
 local AbilityService = require(game.ServerStorage.Modules.Services.AbilityService)
 local AbilityTypes = require(game.ServerStorage.Modules.Types.AbilityTypes)
-local ImprovedAbilityRegistry = require(game.ServerStorage.Modules.registery.ImprovedAbilityRegistry)
 
 local _service = AbilityService.New()
 
@@ -34,9 +33,7 @@ function AbilityComponent.M2(player: Player, isDown: boolean): boolean
     return (_service :: any):M2(player, isDown)
 end
 
-function AbilityComponent.GetRegistry(): typeof(ImprovedAbilityRegistry)
-    return ImprovedAbilityRegistry
-end
+-- Registry removed
 
 function AbilityComponent.GetLoadout(playerId: number)
     return (_service :: any):GetLoadout(playerId)

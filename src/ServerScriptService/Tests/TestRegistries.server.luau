@@ -3,7 +3,6 @@
 
 local TestService = game:GetService("TestService")
 
-local AbilityRegistry = require(game.ServerStorage.Modules.registery.ImprovedAbilityRegistry)
 local EffectRegistry = require(game.ServerStorage.Modules.registery.Effects)
 local LoadoutRegistry = require(game.ServerStorage.Modules.registery.Loadouts)
 
@@ -25,76 +24,7 @@ local function assertHasProperty(object: any, propertyName: string, message: str
 end
 
 -- Test Ability Registry functionality
-local function testAbilityRegistry()
-    TestService:Message("Testing Ability Registry...")
-    
-    -- Test GetAll method
-    assertType(AbilityRegistry.GetAll, "function", "GetAll should be a function")
-    
-    local allAbilities = AbilityRegistry.GetAll()
-    assertType(allAbilities, "table", "GetAll should return a table")
-    
-    -- Test that we have some abilities
-    local abilityCount = 0
-    for id, ability in allAbilities do
-        abilityCount += 1
-        assertType(id, "string", "Ability ID should be a string")
-        assertType(ability, "table", "Ability should be a table")
-        assertHasProperty(ability, "name", `Ability {id} should have a name`)
-        assertHasProperty(ability, "type", `Ability {id} should have a type`)
-        
-        TestService:Message(`✓ Found ability: {id} - {ability.name} ({ability.type})`)
-    end
-    
-    TestService:Message(`Found {abilityCount} abilities total`)
-    
-    -- Test type-specific getters
-    assertType(AbilityRegistry.GetActive, "function", "GetActive should be a function")
-    assertType(AbilityRegistry.GetPassive, "function", "GetPassive should be a function")
-    assertType(AbilityRegistry.GetToggle, "function", "GetToggle should be a function")
-    
-    -- Test with valid ability IDs
-    local dashAbility = AbilityRegistry.GetActive("Dash")
-    if dashAbility then
-        assertHasProperty(dashAbility, "name", "Dash ability should have a name")
-        TestService:Message(`✓ Found dash ability: {dashAbility.name}`)
-    else
-        TestService:Message("ℹ No Dash ability found (this may be expected)")
-    end
-    
-    local keenAbility = AbilityRegistry.GetPassive("Keen")
-    if keenAbility then
-        assertHasProperty(keenAbility, "name", "Keen ability should have a name")
-        TestService:Message(`✓ Found keen ability: {keenAbility.name}`)
-    else
-        TestService:Message("ℹ No Keen ability found (this may be expected)")
-    end
-    
-    -- Test bulk getters
-    local allActives = AbilityRegistry.GetAllActives()
-    local allPassives = AbilityRegistry.GetAllPassives()
-    local allToggles = AbilityRegistry.GetAllToggles()
-    
-    assertType(allActives, "table", "GetAllActives should return a table")
-    assertType(allPassives, "table", "GetAllPassives should return a table")
-    assertType(allToggles, "table", "GetAllToggles should return a table")
-    
-    local activeCount = 0
-    for _ in allActives do activeCount += 1 end
-    local passiveCount = 0
-    for _ in allPassives do passiveCount += 1 end
-    local toggleCount = 0
-    for _ in allToggles do toggleCount += 1 end
-    
-    TestService:Message(`Active abilities: {activeCount}, Passive: {passiveCount}, Toggle: {toggleCount}`)
-    
-    -- Test utility methods
-    local totalCount = AbilityRegistry.Count()
-    assertType(totalCount, "number", "Count should return a number")
-    TestService:Message(`Total ability count: {totalCount}`)
-    
-    TestService:Message("✓ Ability Registry tests passed")
-end
+-- Ability registry tests removed
 
 -- Test Effect Registry functionality
 local function testEffectRegistry()
@@ -150,7 +80,8 @@ local function testLoadoutRegistry()
     local defaultLoadout = LoadoutRegistry.Get("Default")
     if defaultLoadout then
         assertType(defaultLoadout, "table", "Default loadout should be a table")
-        TestService:Message(`✓ Found default loadout with primary attack: {defaultLoadout.primaryAttack or "None"}`)
+        local primary = (defaultLoadout.primaryAttacks and defaultLoadout.primaryAttacks[1]) or "None"
+        TestService:Message(`✓ Found default loadout with primary attack: {primary}`)
         
         -- Test loadout properties
         if defaultLoadout.actives then
@@ -177,8 +108,8 @@ local function testLoadoutRegistry()
             loadoutCount += 1
             assertType(assetKey, "string", "Loadout asset key should be a string")
             assertType(loadout, "table", "Loadout should be a table")
-            
-            TestService:Message(`✓ Found loadout: {assetKey} - Primary: {loadout.primaryAttack or "None"}`)
+            local p = (loadout.primaryAttacks and loadout.primaryAttacks[1]) or "None"
+            TestService:Message(`✓ Found loadout: {assetKey} - Primary: {p}`)
         end
         
         TestService:Message(`Found {loadoutCount} loadouts total`)
@@ -190,44 +121,14 @@ local function testLoadoutRegistry()
 end
 
 -- Test registry integration
-local function testRegistryIntegration()
-    TestService:Message("Testing registry integration...")
-    
-    -- Test that registries can work together
-    local allAbilities = AbilityRegistry.GetAll()
-    
-    -- Verify that we have at least some registries working
-    local hasAbilities = next(allAbilities) ~= nil
-    
-    TestService:Message(`Registry status - Abilities: {hasAbilities and "✓" or "⚠"}`)
-    
-    -- Test that the ability IDs are valid enum values
-    for id, ability in allAbilities do
-        local validIds = {"Dash", "Keen", "Heal", "Block", "Parry", "Charge", "Slam", "Thrust"}
-        local isValidId = false
-        for _, validId in validIds do
-            if id == validId then
-                isValidId = true
-                break
-            end
-        end
-        assert(isValidId, `Ability ID '{id}' is not a valid AbilityId enum value`)
-    end
-    
-    TestService:Message("✓ Registry integration tests passed")
-end
+-- Integration tests related to ability registry removed
 
 -- Run all tests
 local function runAllTests()
     TestService:Message("=== Starting Registry System Tests ===")
     
-    local success = pcall(testAbilityRegistry)
-    if not success then
-        TestService:Error("Ability Registry test failed")
-        return
-    end
-    
-    success = pcall(testEffectRegistry)
+    -- Ability registry removed
+    local success = pcall(testEffectRegistry)
     if not success then
         TestService:Error("Effect Registry test failed")
         return
@@ -239,11 +140,7 @@ local function runAllTests()
         return
     end
     
-    success = pcall(testRegistryIntegration)
-    if not success then
-        TestService:Error("Registry integration test failed")
-        return
-    end
+    -- Ability registry integration removed
     
     TestService:Message("=== All Registry System Tests Passed ===")
 end

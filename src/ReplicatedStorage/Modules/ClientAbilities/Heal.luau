@@ -39,4 +39,13 @@ end
 function Heal.OnCancel(ctx: SharedAbilityContext, reason: string?)
 end
 
+function Heal.getAbilityInputRequired()
+	-- Default mapping: E key (slot 2)
+	return Enum.KeyCode.E
+end
+
+function Heal.getAbilityClassId()
+	return "Rem"
+end
+
 return Heal

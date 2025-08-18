@@ -9,6 +9,7 @@ CoreRemote.OnClientEvent:Connect(function(data)
     local animFolder : Folder = CollectionService:GetTagged(tostring(Player.UserId) .. "_Animations")[1]
     local animName : string = data[1]
 
+    repeat task.wait() until #animFolder:GetChildren() > 0
     if not animFolder or #animFolder:GetChildren() == 0 then
         warn("No animation folder found for player", Player.Name)
         return

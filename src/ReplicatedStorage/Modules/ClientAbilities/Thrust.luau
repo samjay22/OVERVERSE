@@ -42,4 +42,13 @@ end
 function Thrust.OnCancel(ctx: SharedAbilityContext, reason: string?)
 end
 
+function Thrust.getAbilityInputRequired()
+	-- Default mapping: X key
+	return Enum.KeyCode.X
+end
+
+function Thrust.getAbilityClassId()
+	return nil
+end
+
 return Thrust

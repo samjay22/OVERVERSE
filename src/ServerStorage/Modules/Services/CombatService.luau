@@ -144,6 +144,15 @@ function CombatService:Update(character: CharacterTypes.internalCharacter, dt: n
             local ms = stateManager:Get("MaxStamina")
             if s < ms then stateManager:Set("Stamina", math.min(ms, s + staminaBonus * dt)) end
         end
+
+        -- Safety: auto-clear blocking if no recent block requests arrived (handles missed key-up)
+        if isBlocking then
+            local last = combatData.LastBlockTime or 0
+            -- If we haven't seen a fresh block request for a short period, release block
+            if currentTime - last > 0.4 then
+                stateManager:Set("IsBlocking", false)
+            end
+        end
     end
 end
 
@@ -151,7 +160,7 @@ function CombatService:PerformAttack(character: CharacterTypes.internalCharacter
     local stateManager = character.StateManager
     local combatData = character.Components.Combat
 
-    if stateManager:Get("IsDead") or stateManager:Get("IsStunned") then
+    if stateManager:Get("IsDead") or stateManager:Get("IsStunned") or stateManager:Get("IsBlocking") then
         return false
     end
 
@@ -190,7 +199,19 @@ function CombatService:PerformBlock(character: CharacterTypes.internalCharacter,
     if stateManager:Get("Guard") <= 0 then
         return false
     end
-    stateManager:Set("IsBlocking", shouldBlock)
+    -- Only toggle when necessary; refresh timer on repeats to track active holds accurately
+    local isCurrentlyBlocking = stateManager:Get("IsBlocking") == true
+    if shouldBlock then
+        if not isCurrentlyBlocking then
+            stateManager:Set("IsBlocking", true)
+        end
+        local combatData = character.Components.Combat
+        combatData.LastBlockTime = time()
+    else
+        if isCurrentlyBlocking then
+            stateManager:Set("IsBlocking", false)
+        end
+    end
     local bus = self._buses[character.PlayerId]
     if bus then
         bus.BlockStateChanged:Fire(shouldBlock)

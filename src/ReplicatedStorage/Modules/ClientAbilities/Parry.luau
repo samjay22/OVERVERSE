@@ -26,4 +26,13 @@ end
 function Parry.OnCancel(ctx: SharedAbilityContext, reason: string?)
 end
 
+function Parry.getAbilityInputRequired()
+	-- Default mapping: G key
+	return Enum.KeyCode.G
+end
+
+function Parry.getAbilityClassId()
+	return nil
+end
+
 return Parry

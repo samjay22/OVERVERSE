@@ -1,7 +1,17 @@
 local CharacterManager = require(game.ServerStorage.Modules.Entities.Character)
 local Enums = require(game.ReplicatedStorage.Modules.Types.Enums)
 
+local configuredOnce: {[number]: boolean} = {}
+
 CharacterManager:OnCharacterAdded(function(character)
+    -- Change class only once per player to avoid recursive respawn loops
+    local pid = character.PlayerId or character.Player.UserId
+    if not configuredOnce[pid] then
+        configuredOnce[pid] = true
+        task.defer(function()
+            CharacterManager:SetCharacter(character.Player, { classId = "Rem", loadoutAssetKey = "Rem" })
+        end)
+    end
     print(`Character added: {character.Player.Name}`)
     character.OnDamage.Event:Connect(function(damage)
         print(`Character {character.Player.Name} took {damage} damage`)

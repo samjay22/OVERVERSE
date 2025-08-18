@@ -4,9 +4,9 @@
 
 local ServiceManager = require(game.ServerStorage.Modules.Core.ServiceManager)
 local CharacterService = require(game.ServerStorage.Modules.Services.CharacterService)
-local ImprovedAbilityService = require(game.ServerStorage.Modules.Services.ImprovedAbilityService)
+local AbilityService = require(game.ServerStorage.Modules.Services.AbilityService)
 local InputHandler = require(game.ServerStorage.Modules.Utilities.InputHandler)
-local ImprovedAbilityRegistry = require(game.ServerStorage.Modules.registery.ImprovedAbilityRegistry)
+-- Ability registry removed
 local ErrorHandler = require(game.ServerStorage.Modules.Utilities.ErrorHandler)
 
 export type ServiceFactory = {
@@ -31,10 +31,7 @@ function ServiceFactory.CreateServices(): ServiceManager.ServiceManager
 		abilityService = nil, -- Will be set after ability service is created
 	})
 	
-	local abilityService = ImprovedAbilityService.New({
-		characterService = characterService,
-		abilityRegistry = ImprovedAbilityRegistry,
-	})
+	local abilityService = AbilityService.New()
 	
 	-- Wire up cross-dependencies
 	inputHandler:SetAbilityService(abilityService)
@@ -63,13 +60,9 @@ function ServiceFactory.CreateServices(): ServiceManager.ServiceManager
 		dependencies = {"CharacterService"},
 		initialize = function(service)
 			ErrorHandler.Info("Initializing AbilityService")
-			-- Load ability registry stats
-			local stats = ImprovedAbilityRegistry.GetStats()
-			ErrorHandler.Info(`Loaded {stats.total} abilities ({stats.active} active, {stats.passive} passive, {stats.toggle} toggle)`)
 		end,
 		start = function(service)
 			ErrorHandler.Info("Starting AbilityService")
-			-- Start any background processes if needed
 		end,
 	})
 	
@@ -140,7 +133,7 @@ function ServiceFactory.GetCharacterService(): CharacterService.ICharacterServic
 	return ServiceFactory.GetService("CharacterService")
 end
 
-function ServiceFactory.GetAbilityService(): ImprovedAbilityService.IAbilityService?
+function ServiceFactory.GetAbilityService(): AbilityService.IAbilityService?
 	return ServiceFactory.GetService("AbilityService")
 end
 

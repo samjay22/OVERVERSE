@@ -148,11 +148,6 @@ function Character:_Initialize()
     self:RegisterComponent("Combat", CombatComponent :: any)
     self:RegisterComponent("Effect", EffectComponent :: any)
 
-    -- Initialize registries (abilities / effects) using new registry system
-    local ImprovedAbilityRegistry = require(game.ServerStorage.Modules.registery.ImprovedAbilityRegistry)
-    local abilityCount: number = ImprovedAbilityRegistry.Count()
-    print("Ability registry loaded with", abilityCount, "abilities")
-
     -- Effects registry
     local EffectRegistry = require(game.ServerStorage.Modules.registery.Effects)
     local effectCount: number = 0
@@ -241,6 +236,12 @@ function Character:SpawnCharacter(player: Player, config: CharacterConfig?): Cha
         end
     end
 
+    local characterData = self:_CreateCharacterData(player, characterModel, config)
+    if not characterData then
+        characterModel:Destroy()
+        return nil
+    end
+
     -- Create and tag animations folder, then populate from class pack or Default
     local characterAnimationsFolder: Folder = Instance.new("Folder")
     characterAnimationsFolder.Name = "Animations"
@@ -248,44 +249,33 @@ function Character:SpawnCharacter(player: Player, config: CharacterConfig?): Cha
     local animTag = tostring(player.UserId) .. "_Animations"
     CollectionService:AddTag(characterAnimationsFolder, animTag)
 
-    -- Determine animation pack
-    local packName = (classDef and classDef.animationPack) or "Default"
-    do
-        local handler: any = AnimationAssets
-        local idleVal: any
-        local walkVal: any
-        if handler and handler.GetClip then
-            idleVal = handler.GetClip(packName, "Idle")
-            walkVal = handler.GetClip(packName, "Walk")
-        elseif handler and handler.GetAsset then
-            idleVal = handler.GetAsset(packName .. ":" .. "Idle")
-            walkVal = handler.GetAsset(packName .. ":" .. "Walk")
+    task.delay(1, function()
+        -- Determine animation pack
+        local loadoutData = AbilityLoadouts.Get(characterData.StateManager:Get("ShiftState") or classId)
+        local packName = (loadoutData and loadoutData.animationPack) or "Default"
+        do
+            local handler: any = AnimationAssets
+            local assets: {[string]: any} = handler.GetAllAssets()
+            for key, assetVal in pairs(assets) do
+                -- key is "Pack:Animation"; only take entries for the chosen pack
+                if type(key) == "string" and key:sub(1, #packName + 1) == (packName .. ":") then
+                    local inst = (assetVal :: any).Instance
+                    print(inst)
+                    if inst and inst:IsA("Animation") then
+                        local clone = inst:Clone()
+                        -- optional: name the clone as just the clip name (after "Pack:")
+                        clone.Name = key:sub(#packName + 2)
+                        clone.Parent = characterAnimationsFolder
+                        print(clone)
+                    end
+                end
+            end
         end
-        if idleVal and idleVal.Instance and idleVal.Instance:IsA("Animation") then
-            local idle: Animation = idleVal.Instance :: Animation
-            local idleClone = idle:Clone()
-            idleClone.Name = "Idle"
-            idleClone.Parent = characterAnimationsFolder
-        end
-        if walkVal and walkVal.Instance and walkVal.Instance:IsA("Animation") then
-            local walk: Animation = walkVal.Instance :: Animation
-            local walkClone = walk:Clone()
-            walkClone.Name = "Walk"
-            walkClone.Parent = characterAnimationsFolder
-        end
-    end
 
+    end)
     -- Now put the character in the workspace
     characterModel.Parent = workspace
-    
-    NetworkServer:FireClient("StartCharacterAnimation", player, { "Idle" })
-    
-    -- Create character data
-    local characterData = self:_CreateCharacterData(player, characterModel, config)
-    if not characterData then
-        characterModel:Destroy()
-        return nil
-    end
+        
     -- Attach class information and custom fields
     characterData.Definition = classDef
     characterData.ClassId = classId
@@ -329,6 +319,9 @@ function Character:SpawnCharacter(player: Player, config: CharacterConfig?): Cha
         end
     end
     
+    task.delay(1, function()
+        NetworkServer:FireClient("StartCharacterAnimation", player, { "Idle" })
+    end)
     -- Register character (dict + int-indexed list)
     self.CharacterRegistry[playerId] = characterData
     self.ActiveCharacters[playerId] = characterData
@@ -485,24 +478,17 @@ function Character:_CreateCharacterData(player: Player, characterModel: Model, c
     characterData.StateManager:OnStateChange("ShiftState", function(newVal: any, _oldVal: any)
         local AbilityComponentMod = self.Components["Ability"]
         if not AbilityComponentMod or not AbilityComponentMod.SetLoadout then return end
-        local form: string = tostring(newVal)
         -- Choose loadout assetKey per form; fallback to Default
-        local assetKey = (form == "Beast") and "Beast" or ((form == "Human") and "Human" or Constants.CHARACTER_ASSET_DEFAULT)
-        local loadout = AbilityLoadouts.Get(assetKey)
+        local loadout = AbilityLoadouts.Get(newVal)
         AbilityComponentMod.SetLoadout(characterData, loadout)
-    end)
-
-    -- Apply initial loadout based on current ShiftState (deferred to allow AbilityComponent to register)
-    task.defer(function()
-        local AbilityComponentMod = self.Components["Ability"]
-        if not AbilityComponentMod or not AbilityComponentMod.SetLoadout then return end
-        local currentForm = characterData.StateManager:Get("ShiftState") or "Human"
-        local assetKey = (currentForm == "Beast") and "Beast" or ((currentForm == "Human") and "Human" or Constants.CHARACTER_ASSET_DEFAULT)
-        local loadout = AbilityLoadouts.Get(assetKey)
-        AbilityComponentMod.SetLoadout(characterData, loadout)
+        print("Shift state changed")
     end)
     
     return characterData
+end
+
+function Character:SetCharacter(...)
+    warn(...)
 end
 
 function Character:_InitializeStateManager(characterData: internalCharacter, config: CharacterConfig?)
@@ -716,6 +702,7 @@ end
 
 function Character:_SetupPlayerEvents()
     table.insert(self._connections, Players.PlayerAdded:Connect(function(player: Player)
+        player:SetAttribute("ClassId", "Rem")
         -- Wait a heartbeat to ensure player is fully replicated, then spawn
         task.defer(function()
             self:SpawnCharacter(player)
@@ -783,21 +770,6 @@ function Character:GetCharacterData(player: Player): CharacterData?
     return data and (data :: CharacterData) or nil
 end
 
--- Combat and damage helpers to ensure events are fired consistently
-function Character:PerformAttack(player: Player, attackType: string?): boolean
-    local characterData: internalCharacter? = self.CharacterRegistry[player.UserId]
-    if not characterData then return false end
-    local combat = self.Components["Combat"]
-    if combat and combat.PerformAttack then
-        local ok, result = pcall(combat.PerformAttack, characterData, attackType)
-        if ok and result then
-            characterData.Signals.OnAttack:Fire(attackType or "Default")
-            return true
-        end
-    end
-    return false
-end
-
 function Character:TakeDamage(player: Player, damage: number, canBlock: boolean?): number
     local characterData: internalCharacter? = self.CharacterRegistry[player.UserId]
     if not characterData then return 0 end
@@ -817,28 +789,6 @@ end
 
 function Character:GetPerformanceMetrics()
     return table.clone(self.PerformanceMetrics)
-end
-
--- Ability helpers
-function Character:CastAbility(player: Player, abilityId: string, ctxExtra: {[string]: any}?): boolean
-    local ability = self.Components["Ability"]
-    if not ability or not ability.Activate then return false end
-    local ok, res = pcall(ability.Activate, player, abilityId, ctxExtra)
-    if ok then return res == nil and true or res end
-    warn(`CastAbility failed for {player.Name}:{abilityId}: {res}`)
-    return false
-end
-
-function Character:PrimaryAttack(player: Player, attackType: string?): boolean
-    local ability = self.Components["Ability"]
-    if ability and ability.PrimaryAttack then
-        local ok, res = pcall(ability.PrimaryAttack, player, attackType)
-        if ok then return res == nil and true or res end
-        warn(`PrimaryAttack failed for {player.Name}: {res}`)
-        return false
-    end
-    -- Fallback to direct combat if ability component isn't available
-    return self:PerformAttack(player, attackType)
 end
 
 -- Effect helpers
@@ -874,21 +824,6 @@ end
 
 function Character:GetAbilityComponent()
     return self.Components["Ability"]
-end
-
--- Special actions
-function Character:ShiftCharacter(player: Player, newState: string?): boolean
-    local data = self.CharacterRegistry[player.UserId]
-    if not data then return false end
-    local current = data.StateManager:Get("ShiftState")
-    local nextState = newState or ((current == "Human") and "Beast" or "Human")
-    local ok = data.StateManager:Set("ShiftState", nextState)
-    if ok ~= false then
-        data.Custom = data.Custom or {}
-        data.Custom.LastShiftTime = time()
-        return true
-    end
-    return false
 end
 
 function Character:Destroy()

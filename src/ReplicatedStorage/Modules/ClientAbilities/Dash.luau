@@ -52,4 +52,8 @@ function Dash.getAbilityInputRequired()
 	return Enum.KeyCode.Q
 end
 
+function Dash.getAbilityClassId()
+	return "General"
+end
+
 return Dash

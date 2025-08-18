@@ -1,7 +1,9 @@
--- Pure type declarations for client ability modules (no runtime deps)
 
 export type AbilityId = "Dash" | "Keen" | "Heal" | "Block" | "Parry" | "Charge" | "Slam" | "Thrust"
 export type GameTimestamp = number
+
+-- Class identifier type used for filtering abilities by player class attribute
+export type ClassId = string | number
 
 export type StateSnapshot = {
     timestamp: GameTimestamp,
@@ -48,7 +50,9 @@ export type ClientAbilityModule = {
 	onRequest: ((ctx: SharedAbilityContext) -> AbilityResult)?,
 	OnCancel: ((ctx: SharedAbilityContext, reason: string?) -> ())?,
 
-	getAbilityInputRequired : () -> Enum.KeyCode | Enum.UserInputType
+    getAbilityInputRequired : () -> Enum.KeyCode | Enum.UserInputType,
+    -- Optional flag to indicate which class can use this ability. Return nil for "any class".
+    getAbilityClassId: () -> ClassId?
 }
 
 return {}

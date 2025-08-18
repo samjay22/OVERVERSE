@@ -19,10 +19,14 @@ export type CharacterClassHooks = {
 export type CharacterDefinition = {
     id: CharacterClassId,
     displayName: string?,
+    -- Optional animation pack name (see ReplicatedStorage.Modules.AssetHandlers.Animations)
     animationPack: string?,
     -- Initial state definitions to apply to the StateManager. Values may be raw defaults
     -- or a table with { default: any, validator: (any) -> boolean }
     initialStates: {[string]: any}?,
+    -- Optional mapping of a state/form key to an Ability Loadout assetKey in the Loadouts registry.
+    -- Example: { Human = "Rem", Beast = "Ram", Default = "Default" }
+    loadoutMapping: {[string]: string}?,
     -- Arbitrary custom data fields attached to characterData.Custom
     customFields: {[string]: any}?,
     hooks: CharacterClassHooks?,

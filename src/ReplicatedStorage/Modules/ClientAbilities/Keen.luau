@@ -26,4 +26,13 @@ end
 function Keen.OnCancel(ctx: SharedAbilityContext, reason: string?)
 end
 
+function Keen.getAbilityInputRequired()
+	-- Default mapping: R key (slot 3 default)
+	return Enum.KeyCode.R
+end
+
+function Keen.getAbilityClassId()
+	return nil
+end
+
 return Keen

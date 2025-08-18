@@ -4,8 +4,12 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Enums = require(ReplicatedStorage.Modules.Types.Enums)
+local ClientAbilities = require(ReplicatedStorage.Modules.ClientAbilities)
+local AbilityTypes = require(game.ServerStorage.Modules.Types.AbilityTypes)
 local AbilityComponent = require(game.ServerStorage.Modules.Components.AbilityComponent)
 local CombatComponent = require(game.ServerStorage.Modules.Components.CombatComponent)
+
+export type Loadout = AbilityTypes.Loadout
 
 export type CharacterRef = {
 	PlayerId: number,
@@ -26,12 +30,7 @@ local SLOT_TO_NUM_CODES: {[number]: {number}} = {
 	[3] = { Enum.KeyCode.R.Value, Enum.KeyCode.Three.Value },
 	[4] = { Enum.KeyCode.F.Value, Enum.KeyCode.Four.Value },
 }
-local SLOT_TO_LEGACY_NAMES: {[number]: {string}} = {
-	[1] = { "Q", "One" },
-	[2] = { "E", "Two" },
-	[3] = { "R", "Three" },
-	[4] = { "F", "Four" },
-}
+-- Legacy string key names removed; numeric-only mapping is used throughout
 
 function InputComponent.Initialize(characterData: CharacterRef)
 	-- Ensure ActiveKeys exists
@@ -63,17 +62,70 @@ function InputComponent.Initialize(characterData: CharacterRef)
 			return typeof(v) == "table"
 		end)
 	end
-	local defaultBinds = {
-		M1 = { numeric = { OFFSET + Enum.UserInputType.MouseButton1.Value }, legacy = { "MouseButton1" } },
-		M2 = { numeric = { OFFSET + Enum.UserInputType.MouseButton2.Value }, legacy = { "MouseButton2" } },
-		Slots = {
-			[1] = { numeric = { Enum.KeyCode.Q.Value, Enum.KeyCode.One.Value }, legacy = { "Q", "One" } },
-			[2] = { numeric = { Enum.KeyCode.E.Value, Enum.KeyCode.Two.Value }, legacy = { "E", "Two" } },
-			[3] = { numeric = { Enum.KeyCode.R.Value, Enum.KeyCode.Three.Value }, legacy = { "R", "Three" } },
-			[4] = { numeric = { Enum.KeyCode.F.Value, Enum.KeyCode.Four.Value }, legacy = { "F", "Four" } },
-		},
+
+	-- Helper to convert an EnumItem (KeyCode or UserInputType) into our binding entry (numeric-only)
+	local function toBindingEntry(input: EnumItem): { numeric: {number} }
+		if input.EnumType == Enum.KeyCode then
+			return { numeric = { (input :: any).Value } }
+		elseif input.EnumType == Enum.UserInputType then
+			return { numeric = { OFFSET + (input :: any).Value } }
+		else
+			-- Fallback: no valid mapping
+			return { numeric = {} }
+		end
+	end
+
+	-- Build keybinds from current Loadout + ClientAbilities, with safe fallbacks
+	local binds = {
+		PrimaryAttacks = {toBindingEntry(Enum.UserInputType.MouseButton1), toBindingEntry(Enum.UserInputType.MouseButton2)},
+		Slots = {} :: { [number]: { numeric: {number} } },
 	}
-	characterData.StateManager:Set("KeyBindings", defaultBinds)
+
+	local loadout: Loadout? = (AbilityComponent.GetLoadout and AbilityComponent.GetLoadout(characterData.PlayerId))
+	local activeIds = (loadout and loadout.actives) or {}
+
+	-- Optionally map primary attacks if provided in loadout
+	local function toNumericCode(input: any): number?
+		if typeof(input) == "EnumItem" then
+			local enumItem = (input :: any)
+			if enumItem.EnumType == Enum.UserInputType then
+				return OFFSET + enumItem.Value
+			elseif enumItem.EnumType == Enum.KeyCode then
+				return enumItem.Value
+			end
+		end
+		return nil
+	end
+	if loadout and (loadout :: any).primaryAttacks then
+		local pa = (loadout :: any).primaryAttacks
+		local c1 = toNumericCode(pa[1])
+		local c2 = toNumericCode(pa[2])
+		if c1 then binds.M1 = { numeric = { c1 } } end
+		if c2 then binds.M2 = { numeric = { c2 } } end
+	end
+
+	for slot = 1, 4 do
+		local abilityId: string? = activeIds[slot]
+		local entry
+		if abilityId ~= nil then
+			local clientMod = ClientAbilities.Get(abilityId :: any)
+			if clientMod and typeof(clientMod.getAbilityInputRequired) == "function" then
+				local ok, input = pcall(function()
+					return (clientMod :: any).getAbilityInputRequired()
+				end)
+				if ok and input ~= nil then
+					entry = toBindingEntry(input :: EnumItem)
+				end
+			end
+		end
+		-- Fallback to defaults for the slot if no client-specified input
+		if not entry or (#entry.numeric == 0) then
+			entry = { numeric = table.clone(SLOT_TO_NUM_CODES[slot]) }
+		end
+		binds.Slots[slot] = entry
+	end
+
+	characterData.StateManager:Set("KeyBindings", binds)
 end
 
 -- (helper removed; inlined checks for minimal overhead)
@@ -81,21 +133,11 @@ end
 function InputComponent.Update(characterData: CharacterRef, dt: number)
 	local keysAny = (characterData.StateManager:Get("ActiveKeys") :: any)
 	if typeof(keysAny) ~= "table" then return end
-	local keys = keysAny :: {[number]: boolean} | {[string]: boolean}
+	local keys = keysAny :: {[number]: boolean}
 
 	-- Primary / Secondary
-	local hasM1: boolean
-	local hasM2: boolean
-	if (keys :: any)[OFFSET + Enum.UserInputType.MouseButton1.Value] ~= nil then
-		hasM1 = (keys :: any)[OFFSET + Enum.UserInputType.MouseButton1.Value]
-	else
-		hasM1 = (keys :: any)["MouseButton1"] == true -- legacy fallback
-	end
-	if (keys :: any)[OFFSET + Enum.UserInputType.MouseButton2.Value] ~= nil then
-		hasM2 = (keys :: any)[OFFSET + Enum.UserInputType.MouseButton2.Value]
-	else
-		hasM2 = (keys :: any)["MouseButton2"] == true
-	end
+	local hasM1: boolean = (keys :: any)[OFFSET + Enum.UserInputType.MouseButton1.Value] == true
+	local hasM2: boolean = (keys :: any)[OFFSET + Enum.UserInputType.MouseButton2.Value] == true
 
 	if hasM1 then
 		if AbilityComponent and AbilityComponent.M1 then
@@ -123,23 +165,16 @@ function InputComponent.Update(characterData: CharacterRef, dt: number)
 		local prev = inputState.prevSlotDown :: {[number]: boolean}
 
 		for slot = 1, 4 do
-			local codes = SLOT_TO_NUM_CODES[slot]
-			local names = SLOT_TO_LEGACY_NAMES[slot]
+				-- Prefer dynamic bindings from state; fallback to legacy defaults
+				local kbAny = characterData.StateManager:Get("KeyBindings")
+				local slotBind = (typeof(kbAny) == "table" and (kbAny :: any).Slots and (kbAny :: any).Slots[slot]) or nil
+				local codes = (slotBind and slotBind.numeric) or SLOT_TO_NUM_CODES[slot]
 			local down = false
-			-- numeric codes
+			-- numeric codes only
 			for _, code in ipairs(codes) do
 				if (keys :: any)[code] == true then
 					down = true
 					break
-				end
-			end
-			-- legacy fallback strings
-			if not down then
-				for _, name in ipairs(names) do
-					if (keys :: any)[name] == true then
-						down = true
-						break
-					end
 				end
 			end
 

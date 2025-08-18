@@ -8,6 +8,8 @@ return {
             default = 100,
             validator = function(v) return type(v) == "number" and v >= 0 end,
         },
+        -- Unified form/state used by some character classes (e.g., Human/Beast or Rem/Ram)
+        -- Provide a safe default so code paths relying on ShiftState work for all characters.
         MaxHealth = {
             default = 100,
             validator = function(v) return type(v) == "number" and v > 0 end,

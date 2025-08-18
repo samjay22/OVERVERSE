@@ -4,13 +4,18 @@
 local CharacterTypes = require(game.ServerStorage.Modules.Types.CharacterTypes)
 
 local def: CharacterTypes.CharacterDefinition = {
-	id = "Shifter",
-	displayName = "Shifter",
-	animationPack = "Default",
+	id = "Rem",
+	displayName = "Rem-Ram",
 	initialStates = {
-		ShiftState = { default = "Human", validator = function(v)
-			return v == "Human" or v == "Beast"
+		ShiftState = { default = "Rem", validator = function(v)
+			return v == "Rem" or v == "Ram"
 		end },
+	},
+	-- Map form/state -> Loadout assetKey from Loadouts registry
+	loadoutMapping = {
+		Rem = "Rem",
+		Ram = "Ram",
+		Default = "Rem",
 	},
 	customFields = {
 		ShiftDuration = 10, -- seconds
@@ -18,16 +23,16 @@ local def: CharacterTypes.CharacterDefinition = {
 	},
 	hooks = {
 		onInit = function(character)
-			-- Could add visual indicators or load extra assets
+			character.StateManager:Set("ShiftState", "Rem")
 		end,
 		onUpdate = function(character, dt)
 			-- Example: auto revert after duration when in Beast
 			local state = character.StateManager:Get("ShiftState")
-			if state == "Beast" then
+			if state == "Ram" then
 				local last = character.Custom.LastShiftTime or 0
 				local dur = character.Custom.ShiftDuration or 10
 				if time() - last > dur then
-					character.StateManager:Set("ShiftState", "Human")
+					character.StateManager:Set("ShiftState", "Rem")
 				end
 			end
 		end,
