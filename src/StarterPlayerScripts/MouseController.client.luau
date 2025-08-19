@@ -12,6 +12,7 @@ local MouseTargetConfig = require(game.ReplicatedStorage.Modules.Utility.MouseTa
 
 local TargetUpdateEvent : RemoteFunction = game.ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("UpdatePlayerTarget") :: RemoteFunction
 
+local Player : Player = game.Players.LocalPlayer
 --// Create and configure the mouse target controller \\--
 local config = MouseTargetConfig
 -- Enable debug features if needed during development
@@ -23,8 +24,11 @@ local mouseController = MouseTargetController.new(config)
 
 --// Set up target change callback \\--
 mouseController:onTargetChanged(function(newTarget: Model?, oldTarget: Model?)
-	local newTargetKey : string =  TargetUpdateEvent:InvokeServer(newTarget)
-	print(newTargetKey)
+	while Player:GetAttribute("UsingAbility") do 
+		task.wait()
+	end
+
+	TargetUpdateEvent:InvokeServer(newTarget)
 end)
 
 --// Start the targeting system \\--

@@ -134,13 +134,14 @@ function Utils.getCharacterRootPart(character: Model?): BasePart?
 end
 
 function Utils.getTargetPosition(player: any, input: AbilityInput): Vector3?
-    -- Try to find targeted entity
+    -- Try to find targeted entity first
     local _targetModel, targetPart = AbilityValidator.findTarget(player)
     if targetPart then
         return targetPart.Position
     end
-
-    return nil
+    
+    -- Fallback to input target position (mouse hit)
+    return input.target
 end
 
 -- Types and Interfaces
@@ -324,10 +325,15 @@ function ClientPredictor:ExecuteAbility(abilityId: AbilityId, input: AbilityInpu
         return false
     end
 
-    -- Execute local visuals ONLY after all validation passes (including ability module)
-    if abilityHandler.onCast then
-        pcall(abilityHandler.onCast, context)
-    end
+   task.spawn(function()
+       if abilityHandler.onCast then
+           Players.LocalPlayer:SetAttribute("UsingAbility", true)
+           pcall(abilityHandler.onCast, context)
+        task.defer(function()
+                Players.LocalPlayer:SetAttribute("UsingAbility", false)
+            end)
+        end
+   end)
 
     -- Apply cooldowns and finalize prediction
     self:_applyCooldownsFromResult(result, abilityId, tNow)
@@ -392,7 +398,7 @@ function ClientPredictor:_validateAbilityExecution(abilityId: AbilityId, input: 
         inputData = {
             position = originalState.position,
             direction = input.direction,
-            target = input.target,
+            target = targetPosition, -- Use resolved target position instead of raw input
             mouseHit = input.mouseHit,
             extraData = input.extraData,
         },

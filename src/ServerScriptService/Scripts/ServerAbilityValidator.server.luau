@@ -2,7 +2,7 @@
 -- Server-side ability validation orchestrator
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local ServerScriptService = game:GetService("ServerScriptService")
+local _ServerScriptService = game:GetService("ServerScriptService")
 local ServerStorage = game:GetService("ServerStorage")
 local CollectionService = game:GetService("CollectionService")
 
@@ -14,7 +14,7 @@ local ServerStateManager = require(AbilityValidationRoot:WaitForChild("State"):W
 local AntiCheatValidator = require(AbilityValidationRoot:WaitForChild("AntiCheat"):WaitForChild("AntiCheatValidator"))
 local Remotes = require(AbilityValidationRoot:WaitForChild("Network"):WaitForChild("Remotes"))
 
-local ReplicateAbilityRequest : RemoteEvent = _NetworkServer:RegisterRemoteEvent("ReplicateAbilityRequest")
+local _ReplicateAbilityRequest : RemoteEvent = _NetworkServer:RegisterRemoteEvent("ReplicateAbilityRequest")
 
 type AbilityId = Types.AbilityId
 type StateSnapshot = Types.StateSnapshot
@@ -94,9 +94,9 @@ function ServerAbilityValidator:GetPlayerTarget(player: Player): Model?
 
     local taggedObjects = CollectionService:GetTagged(targetKey)
     if #taggedObjects > 0 then
-        local target = taggedObjects[1]
-        if target:IsA("Model") then
-            return target
+        local targetObject = taggedObjects[1]
+        if targetObject:IsA("Model") then
+            return targetObject
         end
     end
 
@@ -126,11 +126,14 @@ end
 
 function ServerAbilityValidator:_applyCooldowns(player: Player, cooldowns: {[string]: number}, currentState: StateSnapshot): StateSnapshot
     local newState = Utils.shallowClone(currentState)
-    newState.cooldowns = newState.cooldowns or {}
+    if not newState.cooldowns then
+        newState.cooldowns = {}
+    end
+    local stateCooldowns = newState.cooldowns :: {[string]: number}
     
     -- Apply each cooldown
     for abilityId, cooldownTime in pairs(cooldowns) do
-        newState.cooldowns[abilityId] = cooldownTime
+        stateCooldowns[abilityId] = cooldownTime
         
         -- Update anti-cheat system
         self.antiCheat:UpdateCooldown(player, abilityId :: AbilityId, cooldownTime)
@@ -222,9 +225,25 @@ function ServerAbilityValidator:HandlePredictionRequest(player: Player, requestD
         end
     end
 
+    -- Get entity target (if any)
+    local entityTarget = self:GetPlayerTarget(player)
+    
+    -- Determine target position from input data
+    local targetPosition = nil
+    if inputData.target and type(inputData.target) == "userdata" then
+        -- Client sent target position (Vector3)
+        targetPosition = inputData.target
+    elseif entityTarget and entityTarget:FindFirstChild("HumanoidRootPart") then
+        -- Fallback to entity target position
+        local humanoidRootPart = entityTarget:FindFirstChild("HumanoidRootPart") :: BasePart
+        targetPosition = humanoidRootPart.Position
+    elseif inputData.mouseHit and type(inputData.mouseHit) == "userdata" then
+        -- Fallback to mouse hit position
+        targetPosition = inputData.mouseHit
+    end
+
     -- Validate target requirement
-    local target = self:GetPlayerTarget(player)
-    if requiresTarget and not target then
+    if requiresTarget and not targetPosition then
         return self:SendValidationResult(player, createValidationResult(
             predictionId, false, "Target required but not found", serverState
         ))
@@ -236,17 +255,8 @@ function ServerAbilityValidator:HandlePredictionRequest(player: Player, requestD
         if ok and type(range) == "number" and range > 0 then
             local playerCharacter = player.Character
             if playerCharacter and playerCharacter:FindFirstChild("HumanoidRootPart") then
-                local playerPosition = playerCharacter.HumanoidRootPart.Position
-                local targetPosition = nil
-
-                -- Determine target position based on input
-                if target and target:FindFirstChild("HumanoidRootPart") then
-                    targetPosition = target.HumanoidRootPart.Position
-                elseif inputData.mouseHit and type(inputData.mouseHit) == "userdata" then
-                    targetPosition = inputData.mouseHit.Position
-                elseif inputData.position and type(inputData.position) == "userdata" then
-                    targetPosition = inputData.position
-                end
+                local humanoidRootPart = playerCharacter:FindFirstChild("HumanoidRootPart") :: BasePart
+                local playerPosition = humanoidRootPart.Position
 
                 -- Check range if we have a target position
                 if targetPosition then
@@ -269,7 +279,7 @@ function ServerAbilityValidator:HandlePredictionRequest(player: Player, requestD
         inputData = {
             position = serverState.position,
             direction = inputData.direction,
-            target = target or inputData.target,
+            target = targetPosition, -- Use resolved target position
             mouseHit = inputData.mouseHit,
             extraData = inputData.extraData,
         },
@@ -277,7 +287,13 @@ function ServerAbilityValidator:HandlePredictionRequest(player: Player, requestD
     }
 
     -- Execute ability with error handling
-    local success, result = pcall(abilityModule.onRequest, context)
+    local success, result = pcall(function()
+        if abilityModule.onRequest then
+            return abilityModule.onRequest(context)
+        else
+            return { success = false, reason = "No onRequest method" }
+        end
+    end)
     if not success or type(result) ~= "table" or result.success == nil then
         return self:SendValidationResult(player, createValidationResult(
             predictionId, false, "Ability execution error", serverState

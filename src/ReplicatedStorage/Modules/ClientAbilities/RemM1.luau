@@ -1,5 +1,6 @@
 --!strict
--- Client Ability: RemM1 - Ranged attack with spiral projectile
+-- Client Ability: RemM1 - Ranged attack with spiral projectile (improved timing)
+
 local Players = game:GetService("Players")
 local Debris = game:GetService("Debris")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -8,7 +9,7 @@ local RunService = game:GetService("RunService")
 
 local Types = require(ReplicatedStorage.Modules.Types.ClientAbilityTypes)
 
-local Player: Player = game.Players.LocalPlayer
+local Player: Player = Players.LocalPlayer
 
 export type SharedAbilityContext = Types.SharedAbilityContext
 export type AbilityResult = Types.AbilityResult
@@ -26,8 +27,8 @@ local ANIM_PRIORITY = Enum.AnimationPriority.Action
 
 -- Projectile Constants
 local PROJECTILE_SPEED = 80 -- Speed in studs per second (consistent regardless of distance)
-local SPIRAL_RADIUS = 2
-local SPIRAL_FREQUENCY = 3
+local SPIRAL_RADIUS = 4
+local SPIRAL_FREQUENCY = 6
 local PROJECTILE_SIZE = Vector3.new(0.3, 0.3, 0.3) -- Smaller projectile
 local PROJECTILE_COLOR = Color3.new(0.2, 1, 0.3) -- More vibrant green
 
@@ -40,8 +41,8 @@ local PARTICLE_RATE = 30
 local Ability = {}
 
 -- Forward declarations
-local executeAttack: () -> ()
-local playCharacterAnimation: (string) -> AnimationTrack?
+local executeAttack: (number?, Vector3?) -> ()
+local playCharacterAnimation: (string, Vector3?) -> AnimationTrack?
 
 -- Ability Interface Functions
 function Ability.onRequest(ctx: SharedAbilityContext): AbilityResult
@@ -52,12 +53,16 @@ function Ability.onRequest(ctx: SharedAbilityContext): AbilityResult
 end
 
 function Ability.onReplicate(ctx: SharedAbilityContext, serverData: any?)
-    -- Handle replication from other clients
-    task.spawn(executeAttack)
+    -- Handle replication from other clients (latency compensated)
+    local targetPosition = ctx.inputData.target
+    task.spawn(executeAttack, ctx and ctx.timestamp, targetPosition)
 end
 
 function Ability.onCast(ctx: SharedAbilityContext, serverData: any?)
-    task.spawn(playCharacterAnimation, ANIMATION_NAME)
+    -- Local client: play animation, projectile will spawn precisely on "Fire" event/keyframe
+    -- Store the target position from the context for use during animation
+    local targetPosition = ctx.inputData.target
+    task.spawn(playCharacterAnimation, ANIMATION_NAME, targetPosition)
 end
 
 function Ability.OnCancel(ctx: SharedAbilityContext, reason: string?)
@@ -65,16 +70,15 @@ function Ability.OnCancel(ctx: SharedAbilityContext, reason: string?)
 end
 
 -- Helper Functions
-local function doEffect(character: Model?, targetPart: BasePart?)
-    if not character or not targetPart then
-        warn("Invalid character or target part for effect")
+local function doEffect(character: Model?, targetPosition: Vector3?)
+    if not character then
+        warn("Invalid character for effect")
         return
     end
 
     -- Wait for Effects folder to replicate from server (with timeout)
     local effectsFolder = character:FindFirstChild("Effects")
     if not effectsFolder then
-        print("Effects folder not found immediately, waiting...")
         effectsFolder = character:WaitForChild("Effects", 5) -- Wait up to 5 seconds
     end
     
@@ -83,25 +87,76 @@ local function doEffect(character: Model?, targetPart: BasePart?)
         return
     end
 
-    print(`✅ Found Effects folder with {#effectsFolder:GetChildren()} effects`)
-    for _, effect in effectsFolder:GetChildren() do
-        print(`  - Effect: {effect.Name}`)
-    end
-
     local effect = effectsFolder:FindFirstChild("M1")
     if not effect then
         warn("No M1 effect found in Effects folder")
         return
     end
 
-    print(`✅ Using M1 effect: {effect.Name}`)
+    -- Create effect at target position if available, otherwise at character position
+    local effectPosition = targetPosition or (character.PrimaryPart and character.PrimaryPart.Position)
+    if not effectPosition then
+        warn("No valid position for effect")
+        return
+    end
+
+    -- Create a temporary invisible part to attach the effect to
+    local effectPart = Instance.new("Part")
+    effectPart.Name = "EffectAnchor"
+    effectPart.Size = Vector3.new(0.1, 0.1, 0.1)
+    effectPart.Transparency = 1
+    effectPart.CanCollide = false
+    effectPart.Anchored = true
+    effectPart.CFrame = CFrame.new(effectPosition)
+    effectPart.Parent = workspace
+
     local effectClone = effect:Clone()
-    effectClone.Parent = targetPart
-    Debris:AddItem(effectClone, EFFECT_CLEANUP_TIME)
+    effectClone.Parent = effectPart
+    
+    -- Clean up both the effect and the anchor part
+    Debris:AddItem(effectPart, EFFECT_CLEANUP_TIME)
 end
 
--- Helper function to find and play animations
-playCharacterAnimation = function(animName: string): AnimationTrack?
+-- Precise Fire trigger helper
+local function connectFireTrigger(track: AnimationTrack, targetPosition: Vector3?)
+    local fired = false
+    local disconnects: { RBXScriptConnection } = {}
+
+    local function fireOnce()
+        if fired then return end
+        fired = true
+        task.spawn(executeAttack, nil, targetPosition) -- local launch with stored target
+    end
+
+    -- Prefer Animation Events (Markers)
+    local ok, markerSignal = pcall(function()
+        return track:GetMarkerReachedSignal("Fire")
+    end)
+    if ok and markerSignal then
+        table.insert(disconnects, markerSignal:Connect(fireOnce))
+    end
+
+    -- Also support named keyframe "Fire"
+    table.insert(disconnects, track.KeyframeReached:Connect(function(name)
+        if name == "Fire" then fireOnce() end
+    end))
+
+    -- Fallback: halfway if neither fires in time
+    task.delay(math.max(0, track.Length * 0.5), function()
+        fireOnce()
+    end)
+
+    -- Cleanup
+    table.insert(disconnects, track.Stopped:Connect(function()
+        for _, conn in ipairs(disconnects) do
+            conn:Disconnect()
+        end
+        table.clear(disconnects)
+    end))
+end
+
+-- Helper function to find and play animations (updated to use "Fire" timing)
+playCharacterAnimation = function(animName: string, targetPosition: Vector3?): AnimationTrack?
     local character = Player.Character
     if not character then return nil end
     
@@ -120,45 +175,12 @@ playCharacterAnimation = function(animName: string): AnimationTrack?
     -- Load and play animation
     local track = animator:LoadAnimation(anim)
     track.Priority = ANIM_PRIORITY
-    
-    -- Handle existing playback
-    if track.IsPlaying then
-        track:Stop(ANIM_FADE_TIME)
-    end
-    
-    -- Ensure single play
     pcall(function() track.Looped = false end)
+
+    -- Hook precise trigger with target position
+    connectFireTrigger(track, targetPosition)
     
-    -- Handle loop prevention and cleanup
-    local connections = {}
-    
-    connections.loop = track.DidLoop:Connect(function()
-        track:Stop(ANIM_FADE_TIME)
-        for _, conn: any in connections do
-            conn:Disconnect()
-        end
-        table.clear(connections)
-    end)
-    
-    connections.stop = track.Stopped:Connect(function()
-        for _, conn in connections do
-            conn:Disconnect()
-        end
-        table.clear(connections)
-    end)
-    
-    -- Add halfway trigger for attack
-    local halfwayTriggered = false
-    connections.heartbeat = RunService.Heartbeat:Connect(function()
-        if not halfwayTriggered and track.IsPlaying and track.TimePosition >= track.Length * 0.5 then
-            halfwayTriggered = true
-            task.spawn(executeAttack)
-        end
-    end)
-    
-    -- Play animation
     track:Play(ANIM_FADE_TIME, 1, 1)
-    
     return track
 end
 
@@ -266,10 +288,11 @@ local function calculateSpiralPosition(startPos: Vector3, direction: Vector3, pr
     local spiralRadius = SPIRAL_RADIUS * (1 - progress * progress) -- Quadratic easing for smoother convergence
     
     -- Create perpendicular vectors for spiral
-    local right = direction:Cross(Vector3.new(0, 1, 0)).Unit
-    if right.Magnitude == 0 then
-        right = direction:Cross(Vector3.new(1, 0, 0)).Unit
+    local right = direction:Cross(Vector3.new(0, 1, 0))
+    if right.Magnitude < 1e-6 then
+        right = direction:Cross(Vector3.new(1, 0, 0))
     end
+    right = right.Unit
     local up = direction:Cross(right).Unit
     
     -- Apply spiral offset with slight vertical bias for more natural movement
@@ -277,41 +300,67 @@ local function calculateSpiralPosition(startPos: Vector3, direction: Vector3, pr
     return basePos + spiralOffset
 end
 
-local function animateSpiralProjectile(projectile: BasePart, startPos: Vector3, endPos: Vector3): RBXScriptSignal
+local IMPACT_TRAIL_FADE = 0.15
+
+local function setEmittersEnabled(root: Instance, enabled: boolean)
+    for _, d in ipairs(root:GetDescendants()) do
+        if d:IsA("ParticleEmitter") then
+            d.Enabled = enabled
+        elseif d:IsA("Trail") then
+            d.Enabled = enabled
+        end
+    end
+end
+
+local function animateSpiralProjectile(
+    projectile: BasePart,
+    startPos: Vector3,
+    endPos: Vector3,
+    onImpact: (() -> ())?,
+    initialProgress: number?
+): RBXScriptConnection
     local direction = (endPos - startPos).Unit
     local distance = (endPos - startPos).Magnitude
-    local duration = distance / PROJECTILE_SPEED -- Duration based on consistent speed
-    
-    local startTime = tick()
+    local duration = distance / PROJECTILE_SPEED
+
+    local startProgress = math.clamp(initialProgress or 0, 0, 1)
+    local startTime = time() - (startProgress * duration)
+
     local connection: RBXScriptConnection
-    
-    connection = RunService.Heartbeat:Connect(function()
-        local elapsed = tick() - startTime
-        local progress = math.min(elapsed / duration, 1) -- Clamp progress to 1
-        
+    local impactFired = false
+
+    connection = RunService.Heartbeat:Connect(function(dt)
+        local elapsed = time() - startTime
+        local progress = math.clamp(elapsed / duration, 0, 1)
+
         if progress >= 1 then
-            projectile.CFrame = CFrame.new(endPos)
+            if not impactFired then
+                impactFired = true
+                projectile.CFrame = CFrame.new(endPos)
+                if onImpact then
+                    task.spawn(onImpact)
+                end
+                -- Fade out trails/particles quickly, then cleanup
+                setEmittersEnabled(projectile, false)
+                Debris:AddItem(projectile, IMPACT_TRAIL_FADE)
+            end
             connection:Disconnect()
             return
         end
-        
+
         local finalPos = calculateSpiralPosition(startPos, direction, progress, distance)
-        
-        -- Update projectile position and rotation to face movement direction
-        local lookDirection = direction
-        if progress > 0 then
-            -- Calculate velocity direction for more accurate rotation
-            local nextProgress = math.min((elapsed + 0.016) / duration, 1) -- Next frame
-            local nextPos = calculateSpiralPosition(startPos, direction, nextProgress, distance)
-            lookDirection = (nextPos - finalPos).Unit
-        end
-        
+
+        -- Look towards next position for smoother orientation
+        local step = math.max(dt, 1/120) -- small forward step
+        local nextProgress = math.min(progress + (step / duration), 1)
+        local nextPos = calculateSpiralPosition(startPos, direction, nextProgress, distance)
+        local delta = nextPos - finalPos
+        local lookDirection = delta.Magnitude > 1e-6 and delta.Unit or direction
+
         projectile.CFrame = CFrame.lookAt(finalPos, finalPos + lookDirection)
     end)
-    
-    -- Clean up after duration plus a small buffer
-    Debris:AddItem(projectile, duration + 0.5)
-    return projectile.Destroying
+
+    return connection
 end
 
 local function getTargetInfo(): (Model?, BasePart?)
@@ -334,19 +383,46 @@ local function getTargetInfo(): (Model?, BasePart?)
     return character, targetPart
 end
 
-executeAttack = function()
-    local character, targetPart = getTargetInfo()
-    if not character or not targetPart or not character.PrimaryPart then return end
+executeAttack = function(castTimestamp: number?, targetPosition: Vector3?)
+    local character = Player.Character
+    if not character or not character.PrimaryPart then 
+        warn("No character or PrimaryPart")
+        return 
+    end
 
-    -- Get start and end positions
+    local endPos: Vector3
+    
+    -- Use passed target position (from context) if available, otherwise fallback to current target
+    if targetPosition then
+        endPos = targetPosition + Vector3.new(0, 1, 0) -- Slightly above target
+    else
+        -- Fallback: query current target (for backwards compatibility)
+        local _, targetPart = getTargetInfo()
+        if not targetPart then 
+            warn("No target found")
+            return 
+        end
+        endPos = targetPart.Position + Vector3.new(0, 1, 0)
+    end
+
+    -- Get start position
     local startPos = character.PrimaryPart.Position + Vector3.new(0, 2, 0) -- Slightly above player
-    local endPos = targetPart.Position + Vector3.new(0, 1, 0) -- Slightly above target
     
     -- Create and animate the spiral projectile
     local projectile = createSpiralProjectile(startPos, endPos)
-    animateSpiralProjectile(projectile, startPos, endPos):Once(function()
-        doEffect(character, targetPart)
-    end)
+
+    -- Latency compensation: start mid-flight on replicate
+    local initialProgress: number? = nil
+    if typeof(castTimestamp) == "number" then
+        local distance = (endPos - startPos).Magnitude
+        local duration = distance / PROJECTILE_SPEED
+        initialProgress = math.clamp((time() - castTimestamp) / duration, 0, 1)
+    end
+
+    animateSpiralProjectile(projectile, startPos, endPos, function()
+        -- Trigger impact effect exactly on arrival
+        doEffect(character, endPos)
+    end, initialProgress)
 end
 
 -- Ability Configuration Interface Functions

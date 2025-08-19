@@ -67,11 +67,11 @@ local Config: ShiftLockConfig = table.freeze({
     CAMERA_TRANSITION_IN_SPEED = 12,
     CAMERA_TRANSITION_OUT_SPEED = 12,
     LOCKED_CAMERA_OFFSET = Constants.SHIFT_LOCK_OFFSET,
-    LOCKED_MOUSE_ICON = "rbxassetid://111111111",
+    LOCKED_MOUSE_ICON = "rbxassetid://9126971632",
     SHIFT_LOCK_KEYBINDS = {Enum.KeyCode.LeftShift, Enum.KeyCode.RightShift},
     AUTO_ENABLE = true,
-    ALLOW_TOGGLE = true,
-    MOVEMENT_ROTATION_DELAY = 0.1 -- Delay before applying rotation when moving
+    ALLOW_TOGGLE = false,
+    MOVEMENT_ROTATION_DELAY = 0 -- Delay before applying rotation when moving
 })
 
 --// Module \\--
