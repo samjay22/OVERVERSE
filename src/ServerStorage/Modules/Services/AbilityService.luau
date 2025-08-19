@@ -223,9 +223,11 @@ function AbilityService:SetLoadout(character: AbilityTypes.CharacterRef, newLoad
         return
     end
 
+    local oldLoadout = state.loadout
     state.loadout = _normalizeLoadout(newLoadout)
 
-    -- Passive equip/unequip removed on server
+    -- Handle passive ability changes
+    self:_handlePassiveChanges(character, oldLoadout, state.loadout)
 
     -- Also rebuild default KeyBindings from the new loadout using ClientAbilities inputs
     local OFFSET = 100000
@@ -297,6 +299,59 @@ function AbilityService:SetLoadout(character: AbilityTypes.CharacterRef, newLoad
         (binds.Slots :: any)[slot] = entry
     end
     character.StateManager:Set("KeyBindings", binds)
+end
+
+-- Handle passive ability changes when loadout is updated
+function AbilityService:_handlePassiveChanges(character: AbilityTypes.CharacterRef, oldLoadout: Loadout, newLoadout: Loadout)
+    local oldPassive = oldLoadout.passive
+    local newPassive = newLoadout.passive
+
+    -- Remove old passive if it changed
+    if oldPassive and oldPassive ~= newPassive then
+        self:_unequipPassive(character, oldPassive)
+    end
+
+    -- Equip new passive if different
+    if newPassive and newPassive ~= oldPassive then
+        self:_equipPassive(character, newPassive)
+    end
+end
+
+-- Equip a passive ability
+function AbilityService:_equipPassive(character: AbilityTypes.CharacterRef, passiveId: AbilityId)
+    local stateManager = character.StateManager
+    if not stateManager then return end
+
+    -- Get current passive modifiers
+    local currentModifiers = stateManager:Get("PassiveModifiers") or {}
+    
+    -- For now, add basic stat modifiers based on passive ID
+    -- This should be replaced with proper passive ability module loading
+    if passiveId == "Keen" then
+        currentModifiers.CriticalChance = (currentModifiers.CriticalChance or 0) + 0.15
+        currentModifiers.CriticalDamage = (currentModifiers.CriticalDamage or 0) + 0.25
+    end
+    -- Add more passive abilities here as needed
+
+    stateManager:Set("PassiveModifiers", currentModifiers)
+end
+
+-- Unequip a passive ability  
+function AbilityService:_unequipPassive(character: AbilityTypes.CharacterRef, passiveId: AbilityId)
+    local stateManager = character.StateManager
+    if not stateManager then return end
+
+    -- Get current passive modifiers
+    local currentModifiers = stateManager:Get("PassiveModifiers") or {}
+    
+    -- Remove stat modifiers based on passive ID
+    if passiveId == "Keen" then
+        currentModifiers.CriticalChance = math.max(0, (currentModifiers.CriticalChance or 0) - 0.15)
+        currentModifiers.CriticalDamage = math.max(0, (currentModifiers.CriticalDamage or 0) - 0.25)
+    end
+    -- Add more passive abilities here as needed
+
+    stateManager:Set("PassiveModifiers", currentModifiers)
 end
 
 return AbilityService

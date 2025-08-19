@@ -5,6 +5,9 @@ export type GameTimestamp = number
 -- Class identifier type used for filtering abilities by player class attribute
 export type ClassId = string | number
 
+-- Ability categorization for clearer separation of logic
+export type AbilityCategory = "Primary" | "Active" | "Passive"
+
 export type StateSnapshot = {
     timestamp: GameTimestamp,
     position: Vector3?,
@@ -13,6 +16,7 @@ export type StateSnapshot = {
     stamina: number?,
     cooldowns: {[string]: number}?,
     effects: {[string]: any}?,
+    passiveModifiers: {[string]: number}?, -- New: for passive ability effects
 }
 
 export type SharedAbilityContext = {
@@ -55,7 +59,24 @@ export type ClientAbilityModule = {
     -- Optional flag to indicate which class can use this ability. Return nil for "any class".
     getAbilityClassId: () -> ClassId?,
     getAbilityRange: () -> number?,
-    getRequiresTarget: () -> boolean?
+    getRequiresTarget: () -> boolean?,
+    -- New: categorization for proper handling
+    getAbilityCategory: () -> AbilityCategory,
+}
+
+-- Passive ability module interface - simpler as they don't have activation
+export type PassiveAbilityModule = {
+    -- Called when the passive is equipped
+    onEquip: (playerId: number, characterState: StateSnapshot) -> {[string]: number}?, -- Returns stat modifiers
+    -- Called when the passive is unequipped  
+    onUnequip: (playerId: number, characterState: StateSnapshot) -> (),
+    -- Optional: called periodically while equipped
+    onTick: ((playerId: number, characterState: StateSnapshot, deltaTime: number) -> ())?,
+    
+    -- Metadata functions
+    getAbilityClassId: () -> ClassId?,
+    getAbilityCategory: () -> AbilityCategory, -- Should return "Passive"
+    getStatModifiers: () -> {[string]: number}?, -- Base stat modifications
 }
 
 return {}

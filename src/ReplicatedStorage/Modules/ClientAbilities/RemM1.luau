@@ -8,6 +8,7 @@ local CollectionService = game:GetService("CollectionService")
 local RunService = game:GetService("RunService")
 
 local Types = require(ReplicatedStorage.Modules.Types.ClientAbilityTypes)
+local CameraShakeManager = require(ReplicatedStorage.Modules.Utility.CameraShakeManager)
 
 local Player: Player = Players.LocalPlayer
 
@@ -46,6 +47,7 @@ local playCharacterAnimation: (string, Vector3?) -> AnimationTrack?
 
 -- Ability Interface Functions
 function Ability.onRequest(ctx: SharedAbilityContext): AbilityResult
+    print("test")
     return {
         success = true,
         cooldowns = { [tostring(ctx.abilityId)] = ctx.timestamp + COOLDOWN_TIME },
@@ -420,8 +422,10 @@ executeAttack = function(castTimestamp: number?, targetPosition: Vector3?)
     end
 
     animateSpiralProjectile(projectile, startPos, endPos, function()
-        -- Trigger impact effect exactly on arrival
+        -- Trigger impact effect exactly on arrival with camera shake
         doEffect(character, endPos)
+        -- Add subtle camera shake for impact feedback
+        CameraShakeManager.Bump(endPos, 30)
     end, initialProgress)
 end
 
@@ -432,6 +436,10 @@ end
 
 function Ability.getAbilityClassId()
     return ABILITY_CLASS
+end
+
+function Ability.getAbilityCategory()
+    return "Primary" -- This is a primary attack ability
 end
 
 function Ability.getAbilityRange()

@@ -65,7 +65,7 @@ export type ActiveAbilityDef = BaseAbilityDef & {
 	interruptible: boolean?,
 }
 
--- Active ability definition
+-- Primary attack ability definition (treated as a special type of active)
 export type PrimaryAttackDef = BaseAbilityDef & {
 	type: "Primary",
 	-- No serverActivate: client-authoritative with server validation elsewhere
@@ -77,11 +77,17 @@ export type PrimaryAttackDef = BaseAbilityDef & {
 	interruptible: boolean?,
 }
 
--- Passive ability definition  
+-- Passive ability definition - significantly different from active abilities
 export type PassiveAbilityDef = BaseAbilityDef & {
 	type: "Passive",
-	onActivate: (context: AbilityContext) -> AbilityResult,
-	onDeactivate: (context: AbilityContext) -> AbilityResult,
+	-- Called when equipped to a character
+	onEquip: ((context: AbilityContext) -> {[string]: number}?)?,
+	-- Called when unequipped from a character  
+	onUnequip: ((context: AbilityContext) -> ())?,
+	-- Called periodically while equipped (optional)
+	onTick: ((context: AbilityContext, deltaTime: number) -> ())?,
+	-- Base stat modifiers this passive provides
+	statModifiers: {[string]: number}?,
 }
 
 -- Toggle ability definition

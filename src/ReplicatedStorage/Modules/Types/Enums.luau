@@ -5,6 +5,7 @@
 export type AbilityId = "Dash" | "Keen" | "Heal" | "Block" | "Parry" | "Charge" | "Slam" | "Thrust" | "RemM1" | "RemM2"
 export type AbilityType = "Active" | "Passive" | "Toggle"
 export type AbilityTarget = "Self" | "Target" | "Area" | "None"
+export type AbilityCategory = "Primary" | "Active" | "Passive"
 
 local AbilityId = {
 	Dash = "Dash" :: AbilityId,
@@ -24,6 +25,12 @@ local AbilityType = {
 	Passive = "Passive" :: AbilityType,
 	Toggle = "Toggle" :: AbilityType,
 } :: {[string]: AbilityType}
+
+local _AbilityCategory = {
+	Primary = "Primary" :: AbilityCategory,
+	Active = "Active" :: AbilityCategory,
+	Passive = "Passive" :: AbilityCategory,
+} :: {[string]: AbilityCategory}
 
 local AbilityTarget = {
 	Self = "Self" :: AbilityTarget,

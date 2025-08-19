@@ -9,7 +9,8 @@ local assetCache : { [string]: AssetTypes.AssetValue } = {}
 local assetIdMap : {[string] : {[string] : number}} = {
     Rem = {
         M1 = 100848112721839,
-        Aura = 83733500844066
+        Aura = 83733500844066,
+        M2 = 104983325154104,
     }
 }
 

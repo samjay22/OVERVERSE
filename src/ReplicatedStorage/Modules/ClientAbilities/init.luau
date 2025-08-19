@@ -49,6 +49,10 @@ local function _adapt(abilityModule: any): ClientAbility
         then abilityModule.getAbilityClassId
         else function(): ClassId? return nil end
 
+    local getCategory = if typeof(abilityModule.getAbilityCategory) == "function"
+        then abilityModule.getAbilityCategory
+        else function(): Types.AbilityCategory return "Active" end -- Default to Active
+
     return {
         onCast = function(ctx: SharedAbilityContext): AbilityResult
             if onCastFn then
@@ -70,6 +74,7 @@ local function _adapt(abilityModule: any): ClientAbility
             else function(): AbilityResult return { success = false, reason = "No onReplicate implementation" } end,
         getAbilityInputRequired = getInput,
         getAbilityClassId = getClassId,
+        getAbilityCategory = getCategory,
         getAbilityRange = if typeof(abilityModule.getAbilityRange) == "function"
             then abilityModule.getAbilityRange
             else function(): number? return nil end,
@@ -190,6 +195,26 @@ function ClientAbilities.GetAllForClass(classId: ClassId): {AbilityId}
     local results: {AbilityId} = {}
     for id, ability in pairs(_registry) do
         if _classMatches(ability, classId) then
+            table.insert(results, id)
+        end
+    end
+    return results
+end
+
+function ClientAbilities.GetAllByCategory(category: Types.AbilityCategory): {AbilityId}
+    local results: {AbilityId} = {}
+    for id, ability in pairs(_registry) do
+        if ability.getAbilityCategory() == category then
+            table.insert(results, id)
+        end
+    end
+    return results
+end
+
+function ClientAbilities.GetAllByCategoryForClass(category: Types.AbilityCategory, classId: ClassId): {AbilityId}
+    local results: {AbilityId} = {}
+    for id, ability in pairs(_registry) do
+        if ability.getAbilityCategory() == category and _classMatches(ability, classId) then
             table.insert(results, id)
         end
     end

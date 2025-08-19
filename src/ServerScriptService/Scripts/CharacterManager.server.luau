@@ -1,5 +1,6 @@
 local CharacterManager = require(game.ServerStorage.Modules.Entities.Character)
 local Enums = require(game.ReplicatedStorage.Modules.Types.Enums)
+local Players = game:GetService("Players")
 
 CharacterManager:OnCharacterAdded(function(character)
     print(`Character added: {character.Player.Name}`)
@@ -16,4 +17,17 @@ end)
 
 -- Manual character spawning with configuration - trigger when needed
 task.wait(3)
-CharacterManager:SpawnCharacter(game.Players.samjay22, { classId = "Rem", loadoutAssetKey = "Rem" })
+
+-- Example: Spawn character with a passive ability in their loadout
+local exampleLoadout = {
+    primaryAttacks = { "RemM1", "RemM2" },
+    actives = { "Dash" }, -- Active ability in slot 1
+    passive = "Keen",     -- Keen passive for critical hit bonuses
+    animationPack = "Rem"
+}
+
+CharacterManager:SpawnCharacter(Players.samjay22, { 
+    classId = "Rem", 
+    loadoutAssetKey = "Rem",
+    AbilityLoadout = exampleLoadout 
+})
