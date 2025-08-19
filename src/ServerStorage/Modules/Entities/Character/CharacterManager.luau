@@ -52,17 +52,15 @@ export type ICharacterManager = {
 }
 
 function CharacterManager.New(): ICharacterManager
-	local self = setmetatable({}, CharacterManager)
-	
-	-- Disable auto character loading
 	Players.CharacterAutoLoads = false
 	
-	-- Configuration
+	local self = setmetatable({}, CharacterManager)
+		-- Configuration
 	self.Config = {
 		DefaultRespawnTime = Constants.DEFAULT_RESPAWN_TIME or 5,
 		UpdateInterval = 1/120, -- 120 Hz fixed-step to reduce server load
 		MaxCharacters = 100,
-		EnableAutoRespawn = true
+		EnableAutoRespawn = false
 	}
 	
 	-- Initialize subsystems
@@ -79,7 +77,18 @@ function CharacterManager.New(): ICharacterManager
 		local ok, mod = pcall(function()
 			return require((game.ServerStorage.Modules.registery :: any).Characters)
 		end)
-		if ok then self._characterRegistry = mod end
+		if ok then 
+			self._characterRegistry = mod
+			print(`✅ CharacterRegistry loaded successfully with {mod.Count()} definitions`)
+			
+			-- Debug: List all loaded character definitions
+			local ids = mod.GetIds()
+			for _, id in ids do
+				print(`  - Character definition: {id}`)
+			end
+		else
+			warn(`❌ Failed to load CharacterRegistry: {mod}`)
+		end
 	end
 	
 	-- Create character factory with dependencies
@@ -104,11 +113,6 @@ function CharacterManager.New(): ICharacterManager
 end
 
 function CharacterManager:_Initialize()
-	-- Set up lifecycle callbacks
-	self._lifecycle:SetSpawnCallback(function(player: Player, config: CharacterConfig?)
-		self:SpawnCharacter(player, config)
-	end)
-	
 	-- Set up update loop
 	self._updateLoop:SetUpdateCallback(function(dt: number)
 		self:_UpdateCharacters(dt)
@@ -181,29 +185,14 @@ function CharacterManager:_SetupPlayerEvents()
 	Players.PlayerAdded:Connect(function(player: Player)
 		print(`[CharacterManager] Player added: {player.Name}`)
 		player:SetAttribute("ClassId", "Rem")
-		-- Since CharacterAutoLoads is disabled, we need to manually spawn characters
-		print(`[CharacterManager] Manually spawning character for {player.Name}`)
-		self:SpawnCharacter(player)
+		-- Character spawning is now manual only - no automatic spawning
+		print(`[CharacterManager] Player {player.Name} ready for manual character spawn`)
 	end)
 	
 	Players.PlayerRemoving:Connect(function(player: Player)
 		print(`[CharacterManager] Player removing: {player.Name}`)
 		self:CleanupCharacter(player)
 	end)
-	
-	-- Spawn for any players already present
-	for _, player in ipairs(Players:GetPlayers()) do
-		print(`[CharacterManager] Existing player found: {player.Name}`)
-		
-		-- Since CharacterAutoLoads is disabled, manually spawn
-		print(`[CharacterManager] Manually spawning character for existing player {player.Name}`)
-		self:SpawnCharacter(player)
-		
-		player.CharacterAdded:Connect(function(character: Model)
-			print(`[CharacterManager] Character added for existing player {player.Name}`)
-			self:SpawnCharacter(player)
-		end)
-	end
 end
 
 -- Public API Methods
@@ -221,10 +210,17 @@ function CharacterManager:SpawnCharacter(player: Player, config: CharacterConfig
 	self:CleanupCharacter(player)
 	
 	-- Resolve character class definition
-	local classId: CharacterTypes.CharacterClassId = (config and config.ClassId) or (player:GetAttribute("ClassId") :: any) or "Default"
+	local classId: CharacterTypes.CharacterClassId = (config and (config.ClassId or (config :: any).classId)) or (player:GetAttribute("ClassId") :: any) or "Default"
 	local classDef = nil
 	if self._characterRegistry and self._characterRegistry.Get then
 		classDef = self._characterRegistry.Get(classId)
+		if classDef then
+			print(`✅ Found character definition for class: {classId}`)
+		else
+			warn(`❌ No character definition found for class: {classId}`)
+		end
+	else
+		warn(`❌ Character registry not available`)
 	end
 	
 	-- Create character model (but don't put it in workspace yet)
@@ -281,8 +277,21 @@ function CharacterManager:SpawnCharacter(player: Player, config: CharacterConfig
 	
 	-- Run class onInit hook before components
 	if classDef and classDef.hooks and classDef.hooks.onInit then
+		print(`✅ Calling onInit hook for class: {classId}`)
 		local success, err = pcall(classDef.hooks.onInit, characterData)
-		if not success then warn("Class onInit failed:", err) end
+		if not success then 
+			warn("Class onInit failed:", err) 
+		else
+			print(`✅ onInit hook completed successfully for class: {classId}`)
+		end
+	else
+		if not classDef then
+			warn(`❌ No classDef found for onInit hook`)
+		elseif not classDef.hooks then
+			warn(`❌ No hooks found in classDef for class: {classId}`)
+		elseif not classDef.hooks.onInit then
+			warn(`❌ No onInit hook found in classDef for class: {classId}`)
+		end
 	end
 	
 	-- Initialize components
@@ -423,12 +432,14 @@ end
 function CharacterManager:SetCharacter(player: Player, config: CharacterConfig?): CharacterData?
 	-- Set character configuration by respawning the character with new config
 	if config then
-		-- Set player attributes for persistence
-		if config.classId then
-			player:SetAttribute("ClassId", config.classId)
+		-- Set player attributes for persistence (handle both ClassId and classId)
+		local classId = config.ClassId or (config :: any).classId
+		if classId then
+			player:SetAttribute("ClassId", classId)
 		end
-		if config.loadoutAssetKey then
-			player:SetAttribute("LoadoutAssetKey", config.loadoutAssetKey)
+		local loadoutAssetKey = (config :: any).loadoutAssetKey
+		if loadoutAssetKey then
+			player:SetAttribute("LoadoutAssetKey", loadoutAssetKey)
 		end
 	end
 	

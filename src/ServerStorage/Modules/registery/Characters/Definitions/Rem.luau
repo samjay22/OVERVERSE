@@ -1,9 +1,20 @@
 --!strict
 -- Shifter character with custom ShiftState
 
-local Effects = require(game.ReplicatedStorage.Modules.AssetHandlers).OnModuleLoaded("Effects")
-assert(Effects)
 local CharacterTypes = require(game.ServerStorage.Modules.Types.CharacterTypes)
+
+local function getEffectsHandler()
+	-- Safely get the Effects handler
+	local success, result = pcall(function()
+		return require(game.ReplicatedStorage.Modules.AssetHandlers).OnModuleLoaded("Effects")
+	end)
+	if success and result then
+		return result
+	else
+		warn("Failed to load Effects handler:", result)
+		return nil
+	end
+end
 
 local def: CharacterTypes.CharacterDefinition = {
 	id = "Rem",
@@ -26,26 +37,7 @@ local def: CharacterTypes.CharacterDefinition = {
 	hooks = {
 		onInit = function(character : CharacterTypes.Character)
 			character.StateManager:Set("ShiftState", "Rem")
-
-			--load effects
-			local allEffects = Effects.GetAllAssets()
-			local effectsFolder = Instance.new("Folder")
-			effectsFolder.Name = "Effects"
-			for effectName, effectData in pairs(allEffects) do
-				if effectName:find("Rem:") then 
-					if effectData.Instance then
-						local effectClone = effectData.Instance:Clone()
-						-- Extract just the effect name after the colon (e.g., "Heal" from "Rem:Heal")
-						local cleanName = effectName:split(":")[2] or effectName
-						effectClone.Name = cleanName
-						effectClone.Parent = effectsFolder
-					end
-				end
-			end
-
-			task.defer(function()
-				effectsFolder.Parent = character.Character
-			end)
+			warn("init rem")
 		end,
 		onUpdate = function(character, dt)
 			-- Example: auto revert after duration when in Beast

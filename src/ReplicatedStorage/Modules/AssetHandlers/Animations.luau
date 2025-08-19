@@ -1,6 +1,7 @@
 --!strict
 local InsertService = game:GetService("InsertService")
 local RunService = game:GetService("RunService")
+local ContentProvider = game:GetService("ContentProvider")
 
 local AssetTypes = require(game.ReplicatedStorage.Modules.Types.AssetTypes)
 
@@ -32,6 +33,10 @@ local packs: {[PackName]: {[Animation]: string}} = {
 
 -- Cache of loaded Animation instances: packName/clipName -> AssetValue
 local cache: {[string]: AssetTypes.AssetValue} = {}
+
+-- Preloading state
+local preloadPromises: {[string]: any} = {}
+local isPreloading = false
 
 local function key(packName: PackName, animation: Animation): PackAnimationKey
     -- Guard against bad inputs to avoid "attempt to concatenate table with string"
@@ -75,7 +80,13 @@ local function loadClip(packName: PackName, animation: any): AssetTypes.AssetVal
     end
 
     local ok, valueOrErr = pcall(function()
-        local model = InsertService:LoadAsset(tonumber(assetId))
+        -- Use optimized loading with ContentProvider preload
+        local assetIdNumber = tonumber(assetId)
+        if not assetIdNumber then
+            error("Invalid asset ID: " .. tostring(assetId))
+        end
+        
+        local model = InsertService:LoadAsset(assetIdNumber)
         if not model then error("LoadAsset returned nil for " .. tostring(assetId)) end
         local instance = model:GetChildren()[1]
         if not instance then error("No instance inside asset " .. tostring(assetId)) end
@@ -164,12 +175,88 @@ end
 
 -- Auto-preload all assets on the server so everything is ready for consumers
 function AnimAssets.PreloadAll()
-    for packName, pack in pairs(packs) do
-        for animName in pairs(pack) do
-            task.spawn(loadClip, packName, animName)
-            print(`Preloading animation ${animName} from pack ${packName}`)
+    if not RunService:IsServer() then
+        return -- Only preload on server
+    end
+    
+    print("🚀 Starting optimized animation preload...")
+    local startTime = tick()
+    local totalAnimations = 0
+    
+    -- Count total animations
+    for _, pack in pairs(packs) do
+        for _ in pairs(pack) do
+            totalAnimations = totalAnimations + 1
         end
     end
+    
+    -- Preload animations in batches for better performance
+    local batchSize = 6
+    local loadedCount = 0
+    
+    for packName, pack in pairs(packs) do
+        local animationBatch = {}
+        
+        for animName, assetId in pairs(pack) do
+            table.insert(animationBatch, {
+                packName = packName,
+                animName = animName,
+                assetId = assetId
+            })
+            
+            -- Process batch when it reaches the desired size
+            if #animationBatch >= batchSize then
+                local batchPromises = {}
+                
+                for _, animInfo in animationBatch do
+                    table.insert(batchPromises, task.spawn(function()
+                        loadClip(animInfo.packName, animInfo.animName)
+                        loadedCount = loadedCount + 1
+                        print(`📦 Loaded animation ${animInfo.animName} from pack ${animInfo.packName} ({loadedCount}/{totalAnimations})`)
+                    end))
+                end
+                
+                -- Wait for batch to complete
+                for _, promise in batchPromises do
+                    while coroutine.status(promise) ~= "dead" do
+                        task.wait()
+                    end
+                end
+                
+                animationBatch = {} -- Clear batch
+                task.wait() -- Yield to prevent script timeout
+            end
+        end
+        
+        -- Process remaining animations in the batch
+        if #animationBatch > 0 then
+            local batchPromises = {}
+            
+            for _, animInfo in animationBatch do
+                table.insert(batchPromises, task.spawn(function()
+                    loadClip(animInfo.packName, animInfo.animName)
+                    loadedCount = loadedCount + 1
+                    print(`📦 Loaded animation ${animInfo.animName} from pack ${animInfo.packName} ({loadedCount}/{totalAnimations})`)
+                end))
+            end
+            
+            -- Wait for final batch to complete
+            for _, promise in batchPromises do
+                while coroutine.status(promise) ~= "dead" do
+                    task.wait()
+                end
+            end
+        end
+    end
+    
+    local endTime = tick()
+    local duration = endTime - startTime
+    local packCount = 0
+    for _ in pairs(packs) do
+        packCount = packCount + 1
+    end
+    print(`✅ Animation preload completed in {math.round(duration * 100) / 100}s`)
+    print(`📊 Loaded {loadedCount} animations from {packCount} packs`)
 end
 
 -- Only auto-preload on the server (InsertService is server-only)

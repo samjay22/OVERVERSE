@@ -103,12 +103,10 @@ function CharacterLifecycle:HandleCleanup(characterData: internalCharacter)
 	-- Execute cleanup tasks
 	for _, cleanupTask in pairs(characterData._cleanupTasks) do
 		if typeof(cleanupTask) == "function" then
-			task.defer(function()
-				local success = pcall(cleanupTask)
-				if not success then
-					warn("Cleanup task failed")
-				end
-			end)
+			local success = pcall(cleanupTask)
+			if not success then
+				warn("Cleanup task failed")
+			end
 		end
 	end
 	

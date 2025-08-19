@@ -13,10 +13,20 @@ export type ICharacterAssetLoader = {
 	GetCharacterAsset: (self: ICharacterAssetLoader, assetKey: string?) -> Model?,
 	GetAnimationAsset: (self: ICharacterAssetLoader, packName: string?) -> any?,
 	PreloadAssets: (self: ICharacterAssetLoader, assetKeys: {string}) -> (),
+	
+	-- Internal cache management
+	_assetCache: {[string]: Model},
+	_assetCacheOrder: {string},
+	_assetCacheSize: number,
+	_maxAssetCache: number,
+	_animationCache: {[string]: {[string]: any}},
+	_animationCacheOrder: {string},
+	_animationCacheSize: number,
+	_maxAnimationCache: number,
 }
 
 function CharacterAssetLoader.new(): ICharacterAssetLoader
-	local self = setmetatable({}, CharacterAssetLoader)
+	local self: ICharacterAssetLoader = setmetatable({} :: any, CharacterAssetLoader) :: any
 	
 	-- High-performance LRU caches with size limits
 	self._assetCache = {} :: {[string]: Model}
@@ -71,9 +81,11 @@ function CharacterAssetLoader:GetAnimationAsset(packName: string?): any?
 	
 	-- Load all animations for the pack using the PreloadPack method
 	local handler: any = AnimationAssets
-	if handler and handler.PreloadPack then
-		-- PreloadPack loads all animations for the pack into the handler's cache
-		handler.PreloadPack(key)
+	if handler then
+		-- Ensure the pack is preloaded
+		if handler.PreloadPack then
+			handler.PreloadPack(key)
+		end
 		
 		-- Now get all assets and filter for this pack
 		if handler.GetAllAssets then

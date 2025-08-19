@@ -71,18 +71,30 @@ local function doEffect(character: Model?, targetPart: BasePart?)
         return
     end
 
+    -- Wait for Effects folder to replicate from server (with timeout)
     local effectsFolder = character:FindFirstChild("Effects")
     if not effectsFolder then
-        warn("No Effects folder in character")
+        print("Effects folder not found immediately, waiting...")
+        effectsFolder = character:WaitForChild("Effects", 5) -- Wait up to 5 seconds
+    end
+    
+    if not effectsFolder then
+        warn("No Effects folder in character after waiting")
         return
+    end
+
+    print(`✅ Found Effects folder with {#effectsFolder:GetChildren()} effects`)
+    for _, effect in effectsFolder:GetChildren() do
+        print(`  - Effect: {effect.Name}`)
     end
 
     local effect = effectsFolder:FindFirstChild("M1")
     if not effect then
-        warn("No M1 effect found")
+        warn("No M1 effect found in Effects folder")
         return
     end
 
+    print(`✅ Using M1 effect: {effect.Name}`)
     local effectClone = effect:Clone()
     effectClone.Parent = targetPart
     Debris:AddItem(effectClone, EFFECT_CLEANUP_TIME)
