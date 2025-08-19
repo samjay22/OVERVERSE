@@ -81,10 +81,10 @@ function CharacterAssets.PreloadAssets(assetNames: {string}): ()
     end
 end
 
-task.spawn(function()
-    for charName, effectsList in assetIdMap do
-        for effectName, assetId in pairs(effectsList) do
-            -- Load the asset using the assetId
+for charName, effectsList in assetIdMap do
+    for effectName, assetId in pairs(effectsList) do
+       task.spawn(function()
+    -- Load the asset using the assetId
             local success, result = pcall(function()
                 local characterModel = InsertService:LoadAsset(assetId):GetChildren()[1]
                 if not characterModel then
@@ -92,7 +92,7 @@ task.spawn(function()
                 end
                 return characterModel
             end)
-
+    
             if success and result then
                 local assetValue = {
                     AssetId = tostring(assetId),
@@ -104,8 +104,8 @@ task.spawn(function()
             else
                 warn("Failed to preload effect:", charName .. ":" .. effectName, result)
             end
-        end
+       end)
     end
-end)
+end
 
 return CharacterAssets

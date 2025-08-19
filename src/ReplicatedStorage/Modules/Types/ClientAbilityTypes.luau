@@ -45,6 +45,7 @@ export type ClientAbilityModule = {
 	onCast: (ctx: SharedAbilityContext) -> AbilityResult,
 	onConfirm: ((ctx: SharedAbilityContext, serverData: any?) -> ())?,
 	onReject: ((ctx: SharedAbilityContext, reason: string?) -> ())?,
+	onReplicate: ((ctx: SharedAbilityContext, reason: string?) -> ())?,
 
 	-- New static interface surface (delegates to per-ability module when present)
 	onRequest: ((ctx: SharedAbilityContext) -> AbilityResult)?,

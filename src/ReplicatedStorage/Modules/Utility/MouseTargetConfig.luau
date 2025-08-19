@@ -22,7 +22,7 @@ local MouseTargetConfig: MouseTargetConfig = {
 	raycast = {
 		maxDistance = 1000,
 		ignoreWater = true,
-		filterType = Enum.RaycastFilterType.Exclude,
+		filterType = Enum.RaycastFilterType.Include,
 	},
 	
 	debug = {

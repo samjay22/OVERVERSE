@@ -1,6 +1,7 @@
 -- Client-side ability registry with per-ability modules and a static interface (refactored)
-
+local AbilityReplicationEvent : RemoteEvent = game.ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("ReplicateAbilityRequest") :: RemoteEvent
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
 
 local Types = require(ReplicatedStorage.Modules.Types.ClientAbilityTypes)
 
@@ -64,6 +65,9 @@ local function _adapt(abilityModule: any): ClientAbility
         onConfirm = onConfirmFn,
         onReject = rejectFn,
         OnCancel = rejectFn, -- keep legacy alias
+        onReplicate = if typeof(abilityModule.onReplicate) == "function"
+            then abilityModule.onReplicate
+            else function(): AbilityResult return { success = false, reason = "No onReplicate implementation" } end,
         getAbilityInputRequired = getInput,
         getAbilityClassId = getClassId,
         getAbilityRange = if typeof(abilityModule.getAbilityRange) == "function"
@@ -144,16 +148,7 @@ function ClientAbilities.Get(id: AbilityId): ClientAbility?
         return loaded
     end
 
-    -- Do NOT cache fallback; try loading again next time
-    local fallback: ClientAbility = {
-        onCast = function(): AbilityResult return { success = false, reason = "No client module" } end,
-        onRequest = function(): AbilityResult return { success = false, reason = "No client module" } end,
-        getAbilityInputRequired = function(): Enum.KeyCode | Enum.UserInputType
-            return DEFAULT_INPUT
-        end,
-        getAbilityClassId = function(): ClassId? return nil end,
-    }
-    return fallback
+    return error(`message("Ability {id} not found or failed to load")`)
 end
 
 function ClientAbilities.Register(id: AbilityId, ability: ClientAbility)
@@ -233,5 +228,11 @@ end
 
 -- Initial autoload
 _autoloadAll()
+
+if RunService:IsClient() then
+    AbilityReplicationEvent.OnClientEvent:Connect(function(...)
+        print(...)
+    end)
+end
 
 return ClientAbilities

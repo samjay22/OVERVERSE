@@ -1,7 +1,7 @@
 -- Network Server bridge to new NetworkServer with ultra-fast input processing
 
 -- Load the new network server and object pools
-local _NetworkServer = require(game.ServerStorage.Modules.Core.NetworkServer)
+local _NetworkServer: INetworkManager = require(game.ServerStorage.Modules.Core.NetworkServer)
 local ObjectPools = require(game.ServerStorage.Modules.Utilities.ObjectPool)
 
 local _Character = require(game.ServerStorage.Modules.Entities.Character)

@@ -1,5 +1,5 @@
 --!strict
--- Client Ability Predictor using per-ability ClientAbilities modules
+-- Client Ability Predictor with enhanced validation and optimization
 -- Instant local response with server validation and rollback (PivotTo-based)
 
 local Players = game:GetService("Players")
@@ -7,6 +7,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService = game:GetService("UserInputService")
 local HttpService = game:GetService("HttpService")
 local RunService = game:GetService("RunService")
+local CollectionService = game:GetService("CollectionService")
 
 local _require: any = require
 local ClientAbilities = _require(ReplicatedStorage.Modules.ClientAbilities)
@@ -17,10 +18,132 @@ type StateSnapshot = Types.StateSnapshot
 type SharedAbilityContext = Types.SharedAbilityContext
 type AbilityResult = Types.AbilityResult
 
--- Client Prediction Manager
-local ClientPredictor = {}
-ClientPredictor.__index = ClientPredictor
+-- Validation Constants
+local MAX_ABILITY_RANGE = 200 -- Maximum range for any ability
+local _TARGET_VALIDATION_TOLERANCE = 2 -- Tolerance for target position validation
 
+-- Performance Constants
+local PERFORMANCE_CHECK_INTERVAL = 5
+local PREDICTION_TIMEOUT = 30
+local HOLD_LOOP_MIN_WAIT = 0.001
+local HOLD_LOOP_MAX_WAIT = 0.5
+
+-- Validation Module
+local AbilityValidator = {}
+
+function AbilityValidator.validateTarget(player: any, targetPosition: Vector3?): (boolean, string?)
+    if not targetPosition then
+        return false, "No target position provided"
+    end
+    
+    local character = player.Character
+    if not character or not character.PrimaryPart then
+        return false, "Invalid character state"
+    end
+    
+    return true, nil
+end
+
+function AbilityValidator.validateDistance(character: Model?, targetPosition: Vector3?, maxRange: number): (boolean, string?)
+    if not character or not character.PrimaryPart then
+        return false, "Invalid character"
+    end
+    
+    if not targetPosition then
+        return false, "No target position"
+    end
+    
+    local distance = (character.PrimaryPart.Position - targetPosition).Magnitude
+    if distance > maxRange then
+        return false, `Target too far (${math.floor(distance)} > ${maxRange})`
+    end
+    
+    return true, nil
+end
+
+function AbilityValidator.findTarget(player: any): (Model?, BasePart?)
+    local targetKey = player:GetAttribute("targetKey") :: string?
+    if not targetKey then
+        return nil, nil
+    end
+    
+    local targets = CollectionService:GetTagged(targetKey)
+    local target = targets[1]
+    if not target then
+        return nil, nil
+    end
+    
+    local targetModel = target :: Model & {PrimaryPart: BasePart?}
+    return targetModel, targetModel.PrimaryPart
+end
+
+function AbilityValidator.validateAbilityRequirements(
+    handler: any, 
+    character: Model?, 
+    targetPosition: Vector3?
+): (boolean, string?)
+    if not handler then
+        return false, "No ability handler found"
+    end
+    
+    -- Check if ability requires a target
+    local requiresTarget = handler.getRequiresTarget and handler.getRequiresTarget() or false
+    if requiresTarget then
+        local success, reason = AbilityValidator.validateTarget(Players.LocalPlayer, targetPosition)
+        if not success then
+            return false, reason
+        end
+    end
+    
+    -- Check range if available
+    local maxRange = handler.getAbilityRange and handler.getAbilityRange() or MAX_ABILITY_RANGE
+    if targetPosition then
+        local success, reason = AbilityValidator.validateDistance(character, targetPosition, maxRange)
+        if not success then
+            return false, reason
+        end
+    end
+    
+    return true, nil
+end
+
+-- Utility Functions
+local Utils = {}
+
+function Utils.now(): number
+    return workspace:GetServerTimeNow()
+end
+
+function Utils.shallowClone<T>(t: {[any]: T}?): {[any]: T}
+    local r: {[any]: T} = {}
+    if t then
+        for k, v in pairs(t) do
+            r[k] = v
+        end
+    end
+    return r
+end
+
+function Utils.getCharacterRootPart(character: Model?): BasePart?
+    if not character then return nil end
+    local hrp = character:FindFirstChild("HumanoidRootPart")
+    if hrp and hrp:IsA("BasePart") then
+        return hrp
+    end
+    return character.PrimaryPart
+end
+
+function Utils.getTargetPosition(player: any, input: AbilityInput): Vector3?
+    -- Try to find targeted entity
+    local _targetModel, targetPart = AbilityValidator.findTarget(player)
+    if targetPart then
+        return targetPart.Position
+    end
+
+    return nil
+end
+
+-- Types and Interfaces
 type SmoothState = {
     active: boolean,
     startCF: CFrame?,
@@ -31,19 +154,19 @@ type SmoothState = {
     targetVel: Vector3?,
 }
 
-local function now(): number
-    return workspace:GetServerTimeNow()
-end
+type PredictionData = {
+    id: string,
+    timestamp: number,
+    originalState: StateSnapshot,
+    predictedState: StateSnapshot?,
+    context: SharedAbilityContext,
+    result: AbilityResult?,
+    timeoutHandle: thread?,
+}
 
-local function shallowClone<T>(t: {[any]: T}?): {[any]: T}
-    local r: {[any]: T} = {}
-    if t then
-        for k, v in pairs(t) do
-            r[k] = v
-        end
-    end
-    return r
-end
+-- Client Prediction Manager
+local ClientPredictor = {}
+ClientPredictor.__index = ClientPredictor
 
 function ClientPredictor.new()
     local self = setmetatable({}, ClientPredictor)
@@ -120,21 +243,12 @@ function ClientPredictor:GeneratePredictionId(): string
     return `pred_{self.player.UserId}_{self.predictionCounter}_{HttpService:GenerateGUID(false)}`
 end
 
-local function getCharacterRootPart(character: Model?): BasePart?
-    if not character then return nil end
-    local hrp = character:FindFirstChild("HumanoidRootPart")
-    if hrp and hrp:IsA("BasePart") then
-        return hrp
-    end
-    return character.PrimaryPart
-end
-
 -- Local debounce helpers
 function ClientPredictor:GetCooldownRemaining(abilityId: AbilityId, t: number?): number
     local key = tostring(abilityId)
     local lc = self.localCooldowns :: {[string]: number}
     local untilTs: number? = lc[key]
-    local current = t or now()
+    local current = t or Utils.now()
     if untilTs ~= nil then
         local diff = (untilTs :: number) - current
         if diff > 0 then
@@ -155,56 +269,126 @@ function ClientPredictor:ApplyCooldowns(cooldowns: {[string]: number}?)
 end
 
 type AbilityInput = { direction: Vector3?, target: Vector3?, mouseHit: Vector3?, extraData: {[string]: any}? }
+
+-- Validation result type for better error handling
+type ValidationResult = {
+    success: boolean,
+    reason: string?,
+    abilityHandler: any?,
+    character: Model?,
+    targetPosition: Vector3?,
+    context: SharedAbilityContext?,
+}
+
 function ClientPredictor:ExecuteAbility(abilityId: AbilityId, input: AbilityInput): boolean
-    -- Serialize entry to avoid race conditions starting multiple abilities at once
+    -- Fast path checks - fail immediately if basic conditions aren't met
     if not self:_tryAcquireImmediate() then
         return false
     end
 
-    -- Enforce only one ability at a time globally
     if self.activePredictionId ~= nil then
         self:_releaseImmediate()
         return false
     end
 
-    -- Throttle: avoid multiple concurrent predictions of the same ability
-    local existing = self.pendingByAbility[abilityId]
-    if existing ~= nil then
+    if self.pendingByAbility[abilityId] ~= nil then
         self:_releaseImmediate()
         return false
     end
 
-    local tNow = now()
-
-    -- Local debounce check
+    local tNow = Utils.now()
     if self:GetCooldownRemaining(abilityId, tNow) > 0 then
         self:_releaseImmediate()
         return false
     end
 
-    -- Step 1: Build current state snapshot (from pivot)
-    local character: Model? = self.player.Character
-    local humanoid: Humanoid? = character and character:FindFirstChildOfClass("Humanoid")
-    local root: BasePart? = getCharacterRootPart(character)
-    local pivotCF: CFrame? = character and character:GetPivot() or nil
+    -- Comprehensive validation before any side effects
+    local validation = self:_validateAbilityExecution(abilityId, input, tNow)
+    if not validation.success then
+        if validation.reason then
+            warn("Ability execution failed:", validation.reason)
+        end
+        self:_releaseImmediate()
+        return false
+    end
 
-    -- Provide local cooldowns to the module's onRequest so it can enforce client-side CD
-    local cooldownsClone = shallowClone(self.localCooldowns)
+    -- Get ability module's validation result BEFORE executing visuals
+    local abilityHandler = validation.abilityHandler :: any
+    local context = validation.context :: SharedAbilityContext
+    
+    local result: AbilityResult = self:_getAbilityModuleResult(abilityHandler, context)
+    if not result.success then
+        self:_applyMinimalDebounce(abilityId, tNow)
+        warn("Ability module validation failed:", result.reason)
+        self:_releaseImmediate()
+        return false
+    end
 
+    -- Execute local visuals ONLY after all validation passes (including ability module)
+    if abilityHandler.onCast then
+        pcall(abilityHandler.onCast, context)
+    end
+
+    -- Apply cooldowns and finalize prediction
+    self:_applyCooldownsFromResult(result, abilityId, tNow)
+    self:_createAndSendPrediction(abilityId, input, context, validation.character :: Model, result)
+    
+    self:_releaseImmediate()
+    return true
+end
+
+-- Comprehensive validation method
+function ClientPredictor:_validateAbilityExecution(abilityId: AbilityId, input: AbilityInput, currentTime: number): ValidationResult
+    -- Get ability handler
+    local abilityHandler = ClientAbilities.Get(abilityId)
+    if not abilityHandler then
+        return { success = false, reason = "No ability handler found" }
+    end
+
+    -- Validate character state
+    local character = self.player.Character
+    if not character then
+        return { success = false, reason = "No character" }
+    end
+
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    local root = Utils.getCharacterRootPart(character)
+    local pivotCF = character:GetPivot()
+
+    if not root then
+        return { success = false, reason = "No character root part" }
+    end
+
+    -- Get and validate target position
+    local targetPosition = Utils.getTargetPosition(self.player, input)
+    
+    -- Validate ability requirements (distance, target, etc.)
+    local reqSuccess, reqReason = AbilityValidator.validateAbilityRequirements(
+        abilityHandler, 
+        character, 
+        targetPosition
+    )
+    if not reqSuccess then
+        return { success = false, reason = reqReason }
+    end
+
+    -- Build context for successful validation
+    local cooldownsClone = Utils.shallowClone(self.localCooldowns)
+    local healthValue = if humanoid then (humanoid :: Humanoid).Health else 100
     local originalState: StateSnapshot = {
-        timestamp = tNow,
-        position = pivotCF and pivotCF.Position or (root and root.Position or Vector3.new()),
-        velocity = root and root.AssemblyLinearVelocity or Vector3.new(),
-        health = humanoid and humanoid.Health or 100,
+        timestamp = currentTime,
+        position = pivotCF.Position,
+        velocity = root.AssemblyLinearVelocity or Vector3.new(),
+        health = healthValue,
         stamina = 100,
-        cooldowns = cooldownsClone, -- let onRequest consult these
+        cooldowns = cooldownsClone,
         effects = {},
     }
 
     local context: SharedAbilityContext = {
         playerId = self.player.UserId,
         abilityId = abilityId,
-        timestamp = tNow,
+        timestamp = currentTime,
         inputData = {
             position = originalState.position,
             direction = input.direction,
@@ -215,60 +399,86 @@ function ClientPredictor:ExecuteAbility(abilityId: AbilityId, input: AbilityInpu
         characterState = originalState,
     }
 
-    -- Step 2: Execute local visuals immediately (only if not on cooldown)
-    local handler = ClientAbilities.Get(abilityId)
-    if handler and handler.onCast then
-        pcall(handler.onCast, context)
+    return {
+        success = true,
+        abilityHandler = abilityHandler,
+        character = character,
+        targetPosition = targetPosition,
+        context = context,
+    }
+end
+
+-- Get result from ability module
+function ClientPredictor:_getAbilityModuleResult(abilityHandler: any, context: SharedAbilityContext): AbilityResult
+    if not abilityHandler.onRequest then
+        return { success = false, reason = "No onRequest method" }
     end
 
-    -- Step 3: Ask the client module to validate request and return cooldowns
-    local result: AbilityResult =
-        (handler and handler.onRequest and (handler.onRequest :: any)(context))
-        or { success = false, reason = "No client module" }
-
-    if not result.success then
-        -- Optional short tap debounce to prevent spam click floods
-        local key = tostring(abilityId)
-    local lc = self.localCooldowns :: {[string]: number}
-    local prev: number = lc[key] or 0
-    lc[key] = math.max(prev, tNow + self.defaultDebounce)
-        warn("Ability failed:", result.reason)
-    self:_releaseImmediate()
-        return false
+    local success, result = pcall(abilityHandler.onRequest :: any, context)
+    if not success then
+        return { success = false, reason = `onRequest error: {result}` }
     end
 
-    -- Apply returned cooldowns to local debounce immediately
-    if result.cooldowns then
-        self:ApplyCooldowns(result.cooldowns)
-    else
-        -- Fallback: apply a minimal debounce
-        local key = tostring(abilityId)
-    local lc = self.localCooldowns :: {[string]: number}
-    local prev: number = lc[key] or 0
-    lc[key] = math.max(prev, tNow + self.defaultDebounce)
+    if not result or not result.success then
+        return result or { success = false, reason = "onRequest returned falsy" }
     end
 
-    -- Step 4: Send to server for validation
+    return result
+end
+
+-- Create and send prediction to server
+function ClientPredictor:_createAndSendPrediction(
+    abilityId: AbilityId, 
+    input: AbilityInput, 
+    context: SharedAbilityContext, 
+    character: Model,
+    result: AbilityResult
+)
     local predictionId = self:GeneratePredictionId()
-    local prediction = {
+    local prediction: PredictionData = {
         id = predictionId,
         timestamp = time(),
-        originalState = originalState,
-        predictedState = originalState,
+        originalState = context.characterState,
+        predictedState = context.characterState,
         context = context,
         result = result,
-        timeoutHandle = task.delay(5.0, function()
+        timeoutHandle = task.delay(PREDICTION_TIMEOUT, function()
             self:TimeoutPrediction(predictionId)
         end),
     }
 
+    -- Update tracking
     self.pendingPredictions[predictionId] = prediction
     self.pendingByAbility[abilityId] = predictionId
-    self.activePredictionId = predictionId -- lock globally
-    -- Release immediate lock; global lock is now active for the duration of this prediction
-    self:_releaseImmediate()
+    self.activePredictionId = predictionId
 
-    -- Send to server (non-blocking)
+    -- Send to server asynchronously
+    self:_sendPredictionToServer(predictionId, abilityId, input, context, context.characterState)
+end
+
+-- Helper methods for ExecuteAbility
+function ClientPredictor:_applyMinimalDebounce(abilityId: AbilityId, currentTime: number)
+    local key = tostring(abilityId)
+    local lc = self.localCooldowns :: {[string]: number}
+    local prev: number = lc[key] or 0
+    lc[key] = math.max(prev, currentTime + self.defaultDebounce)
+end
+
+function ClientPredictor:_applyCooldownsFromResult(result: AbilityResult, abilityId: AbilityId, currentTime: number)
+    if result.cooldowns then
+        self:ApplyCooldowns(result.cooldowns)
+    else
+        self:_applyMinimalDebounce(abilityId, currentTime)
+    end
+end
+
+function ClientPredictor:_sendPredictionToServer(
+    predictionId: string, 
+    abilityId: AbilityId, 
+    input: AbilityInput, 
+    context: SharedAbilityContext, 
+    originalState: StateSnapshot
+)
     task.spawn(function()
         self.predictionRemote:FireServer({
             predictionId = predictionId,
@@ -278,8 +488,6 @@ function ClientPredictor:ExecuteAbility(abilityId: AbilityId, input: AbilityInpu
             originalState = originalState,
         })
     end)
-
-    return true
 end
 
 function ClientPredictor:HandleServerValidation(validationData: any)
@@ -506,47 +714,51 @@ function ClientPredictor:UpdateSmoothing()
     end
 end
 
--- Hold helpers for Mouse1/Mouse2 abilities
+-- Optimized Hold Loop System with better performance and validation
 function ClientPredictor:StartHoldLoop(abilityId: AbilityId)
     if self.holdTasks[abilityId] ~= nil then
         return
     end
+    
     self.holdFlags[abilityId] = true
 
     self.holdTasks[abilityId] = task.spawn(function()
+        local lastExecutionTime = 0
+        local abilityHandler = ClientAbilities.Get(abilityId)
+        
+        -- Cache ability properties for performance
+        local abilityCooldown = abilityHandler and abilityHandler.getAbilityCooldown and abilityHandler.getAbilityCooldown() or 1
+        local minWaitTime = math.min(HOLD_LOOP_MIN_WAIT, abilityCooldown * 0.1)
+        
         while self.holdFlags[abilityId] do
-            -- Try to fire when: no active ability globally and no local cooldown
-            if self.activePredictionId == nil and self:GetCooldownRemaining(abilityId) <= 0 then
+            local currentTime = Utils.now()
+            local timeSinceLastExecution = currentTime - lastExecutionTime
+            
+            -- Check if we should attempt execution
+            local shouldExecute = self.activePredictionId == nil 
+                and self:GetCooldownRemaining(abilityId) <= 0
+                and timeSinceLastExecution >= minWaitTime
+            
+            if shouldExecute then
                 local character: Model? = self.player.Character
                 if not character then break end
 
-                local mouse = self.player:GetMouse()
-                local pivotCF = character:GetPivot()
-                local direction = pivotCF.LookVector
-                local mousePos = mouse.Hit.Position
-
-                self:ExecuteAbility(abilityId, {
-                    direction = direction,
-                    target = mousePos,
-                    mouseHit = mousePos,
-                })
-
-                -- Wait roughly until cooldown is up to avoid busy loop
-                local rem = self:GetCooldownRemaining(abilityId)
-                if rem > 0 then
-                    task.wait(math.min(rem, 0.25))
-                else
-                    task.wait(0.05)
-                end
-            else
-                -- Back off while locked or cooling down
-                local rem = self:GetCooldownRemaining(abilityId)
-                if rem > 0 then
-                    task.wait(math.min(rem, 0.25))
-                else
-                    task.wait(0.05)
+                local inputData = self:_getMouseInputData(character)
+                if inputData then
+                    local success = self:ExecuteAbility(abilityId, inputData)
+                    if success then
+                        lastExecutionTime = currentTime
+                    end
                 end
             end
+
+            -- Calculate adaptive wait time based on ability state
+            local cooldownRemaining = self:GetCooldownRemaining(abilityId)
+            local waitTime = if cooldownRemaining > 0 
+                then math.min(cooldownRemaining * 0.8, HOLD_LOOP_MAX_WAIT)  -- Wait for 80% of cooldown
+                else minWaitTime
+            
+            task.wait(waitTime)
         end
         self.holdTasks[abilityId] = nil
     end)
@@ -554,123 +766,172 @@ end
 
 function ClientPredictor:StopHoldLoop(abilityId: AbilityId)
     self.holdFlags[abilityId] = false
-    local t = self.holdTasks[abilityId]
-    if t then
-        -- Let the loop naturally exit; avoid task.cancel to prevent mid-frame issues
-        -- It will nil out holdTasks on exit
-    end
+    -- Let the loop naturally exit to avoid mid-frame issues
 end
 
--- Input handling with all abilities
+-- Enhanced mouse input data with validation
+function ClientPredictor:_getMouseInputData(character: Model): AbilityInput?
+    local mouse = self.player:GetMouse()
+    if not mouse then return nil end
+    
+    local pivotCF = character:GetPivot()
+    local mouseHit = mouse.Hit
+    
+    if not mouseHit then return nil end
+    
+    return {
+        direction = pivotCF.LookVector,
+        target = mouseHit.Position,
+        mouseHit = mouseHit.Position,
+    }
+end
+
+-- Optimized Input Handling System with caching and reduced lookups
 function ClientPredictor:SetupInputHandling()
+    -- Pre-cache handler functions for better performance
+    local function createHoldHandler(handlerType: string)
+        return function(abilityId: AbilityId)
+            if handlerType == "start" then
+                self:StartHoldLoop(abilityId)
+            else
+                self:StopHoldLoop(abilityId)
+            end
+        end
+    end
+
+    local inputBeganHandlers = {
+        [Enum.UserInputType.MouseButton1] = createHoldHandler("start"),
+        [Enum.UserInputType.MouseButton2] = createHoldHandler("start"),
+    }
+
+    local inputEndedHandlers = {
+        [Enum.UserInputType.MouseButton1] = createHoldHandler("stop"),
+        [Enum.UserInputType.MouseButton2] = createHoldHandler("stop"),
+    }
+
+    -- Cache commonly accessed values
+    local player = self.player
+    local getAbilityByInput = ClientAbilities.GetAbilityByInputValue
+
     UserInputService.InputBegan:Connect(function(input, gameProcessed)
         if gameProcessed then return end
 
-        local character: Model? = self.player.Character
+        local character = player.Character
         if not character then return end
 
-        local mouse = self.player:GetMouse()
-        local pivotCF = character:GetPivot()
-        local direction = pivotCF.LookVector
-        local mousePos = mouse.Hit.Position
-
-        -- Determine the correct enum to query (KeyCode for keyboard, UserInputType for mouse)
-        local queryEnum: EnumItem
-        if input.UserInputType == Enum.UserInputType.MouseButton1
+        -- Fast enum determination
+        local queryEnum: EnumItem = if input.UserInputType == Enum.UserInputType.MouseButton1
             or input.UserInputType == Enum.UserInputType.MouseButton2
-            or input.UserInputType == Enum.UserInputType.MouseButton3 then
-            queryEnum = input.UserInputType
-        else
-            queryEnum = input.KeyCode
-        end
+            or input.UserInputType == Enum.UserInputType.MouseButton3
+            then input.UserInputType
+            else input.KeyCode
 
-        local abilityId: AbilityId? = ClientAbilities.GetAbilityByInputValue(queryEnum)
-        if not abilityId then
+        local abilityId = getAbilityByInput(queryEnum)
+        if not abilityId then return end
+
+        -- Handle mouse buttons with optimized hold loops
+        local holdHandler = inputBeganHandlers[input.UserInputType]
+        if holdHandler then
+            holdHandler(abilityId)
             return
         end
 
-        -- If Mouse1/Mouse2, start hold loop (it will fire immediately if possible)
-        if input.UserInputType == Enum.UserInputType.MouseButton1
-            or input.UserInputType == Enum.UserInputType.MouseButton2 then
-            self:StartHoldLoop(abilityId :: AbilityId)
+        -- Handle keyboard inputs with early exit conditions
+        if self.activePredictionId ~= nil or self:GetCooldownRemaining(abilityId) > 0 then
             return
         end
 
-        -- Keyboard (or other) single-fire: enforce global lock and cooldowns
-        if self.activePredictionId ~= nil then
-            return
+        -- Only create input data if we're going to use it
+        local inputData = self:_getMouseInputData(character)
+        if inputData then
+            self:ExecuteAbility(abilityId, inputData)
         end
-        if self:GetCooldownRemaining(abilityId :: AbilityId) > 0 then
-            return
-        end
-
-        local inputData = {
-            direction = direction,
-            target = mousePos,
-            mouseHit = mousePos,
-        }
-        self:ExecuteAbility(abilityId :: AbilityId, inputData)
     end)
 
     UserInputService.InputEnded:Connect(function(input, gameProcessed)
         if gameProcessed then return end
 
-        -- Stop hold loop for Mouse1/Mouse2
-        if input.UserInputType == Enum.UserInputType.MouseButton1
-            or input.UserInputType == Enum.UserInputType.MouseButton2 then
+        local endHandler = inputEndedHandlers[input.UserInputType]
+        if not endHandler then return end
 
-            local queryEnum: EnumItem = input.UserInputType
-            local abilityId: AbilityId? = ClientAbilities.GetAbilityByInputValue(queryEnum)
-            if abilityId then
-                self:StopHoldLoop(abilityId :: AbilityId)
+        local abilityId = getAbilityByInput(input.UserInputType)
+        if abilityId then
+            endHandler(abilityId)
+        end
+    end)
+end
+
+-- Optimized Performance Monitoring and Cleanup
+function ClientPredictor:StartPerformanceMonitoring()
+    task.spawn(function()
+        while true do
+            task.wait(PERFORMANCE_CHECK_INTERVAL)
+
+            local pendingCount = 0
+            local oldestPrediction = math.huge
+            local stalePredictions = {}
+
+            -- Single pass through predictions for efficiency
+            for id, prediction in pairs(self.pendingPredictions) do
+                pendingCount += 1
+                local age = time() - prediction.timestamp
+                oldestPrediction = math.min(oldestPrediction, prediction.timestamp)
+                
+                if age > PREDICTION_TIMEOUT then
+                    table.insert(stalePredictions, id)
+                end
+            end
+
+            -- Clean up stale predictions
+            for _, id in stalePredictions do
+                self:TimeoutPrediction(id)
+            end
+
+            -- Optional performance logging (only when there are issues)
+            if pendingCount > 3 or oldestPrediction < math.huge and (time() - oldestPrediction) > 3 then
+                local oldestAge = if oldestPrediction < math.huge then time() - oldestPrediction else 0
+                warn(`Performance: {pendingCount} predictions pending, oldest: {math.floor(oldestAge * 100) / 100}s`)
             end
         end
     end)
 end
 
--- Performance monitoring and cleanup
-function ClientPredictor:StartPerformanceMonitoring()
-    task.spawn(function()
-        while true do
-            task.wait(5)
-
-            local pendingCount = 0
-            local oldestPrediction = math.huge
-
-            for _, prediction in pairs(self.pendingPredictions) do
-                pendingCount += 1
-                oldestPrediction = math.min(oldestPrediction, prediction.timestamp)
-            end
-
-            if pendingCount > 0 then
-                local oldestAge = time() - oldestPrediction
-                print(`Performance: {pendingCount} predictions pending, oldest: {math.floor(oldestAge * 100) / 100}s`)
-                if oldestAge > 10 then
-                    for id, pred in pairs(self.pendingPredictions) do
-                        if time() - pred.timestamp > 10 then
-                            self:TimeoutPrediction(id)
-                        end
-                    end
-                end
-            end
+-- Scalable Ability Registration System
+function ClientPredictor:GetRegisteredAbilities(): {[string]: string}
+    local abilities = {}
+    
+    -- Dynamically discover abilities from the ClientAbilities module
+    -- This makes the system more scalable
+    for abilityId in pairs(ClientAbilities._modules or {}) do
+        local handler = ClientAbilities.Get(abilityId)
+        if handler and handler.getAbilityInputRequired then
+            local inputType = handler.getAbilityInputRequired()
+            local inputName = if typeof(inputType) == "EnumItem" then inputType.Name else tostring(inputType)
+            abilities[tostring(abilityId)] = inputName
         end
-    end)
+    end
+    
+    return abilities
+end
+
+function ClientPredictor:PrintControls()
+    print("Client ability predictor initialized (ClientAbilities)")
+    print("Controls:")
+    
+    local abilities = self:GetRegisteredAbilities()
+    for abilityId, inputName in pairs(abilities) do
+        print(`{inputName} - {abilityId}`)
+    end
+    
+    if next(abilities) == nil then
+        print("No abilities registered")
+    end
 end
 
 -- Initialize the system
 local predictor = ClientPredictor.new()
 predictor:SetupInputHandling()
 predictor:StartPerformanceMonitoring()
-
-print("Client ability predictor initialized (ClientAbilities)")
-print("Controls:")
-print("Q - Dash (movement)")
-print("E - Heal (recovery)")
-print("R - Keen (damage boost)")
-print("F - Block (defense)")
-print("G - Parry (counter)")
-print("C - Charge (attack movement)")
-print("V - Slam (AOE)")
-print("X - Thrust (directional attack)")
+predictor:PrintControls()
 
 return predictor
