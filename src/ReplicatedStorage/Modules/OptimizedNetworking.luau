@@ -7,11 +7,16 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 
 -- Ultra-fast network optimization constants
-local BATCH_SIZE = 15 -- Increased batch size for better efficiency
-local BATCH_INTERVAL = 0.025 -- ~40 FPS batching (25ms) - faster
-local MAX_BATCH_WAIT = 0.075 -- Reduced max wait (75ms)
-local PRIORITY_BATCH_SIZE = 5 -- Smaller batches for critical abilities
-local COMPRESSION_THRESHOLD = 3 -- Compress batches with 3+ items
+local BATCH_SIZE = 20 -- Optimized batch size for better throughput
+local BATCH_INTERVAL = 0.016 -- ~60 FPS batching (16ms) - optimized for frame rate
+local MAX_BATCH_WAIT = 0.05 -- Further reduced max wait (50ms)
+local PRIORITY_BATCH_SIZE = 3 -- Optimized smaller batches for critical abilities
+local COMPRESSION_THRESHOLD = 2 -- More aggressive compression threshold
+
+-- Performance optimization constants
+local _MAX_REQUEST_POOL_SIZE = 128 -- Pre-allocated request pool
+local _MAX_VALIDATION_POOL_SIZE = 64 -- Pre-allocated validation pool
+local _STATS_UPDATE_INTERVAL = 10 -- Reduce stats update frequency
 
 -- Types for network optimization
 export type NetworkBatch = {
@@ -46,12 +51,21 @@ NetworkBatchProcessor.__index = NetworkBatchProcessor
 function NetworkBatchProcessor.new()
     local self = setmetatable({}, NetworkBatchProcessor)
     
-    -- Pre-allocated tables for maximum performance
-    self.pendingRequests = table.create(32)
-    self.pendingValidations = table.create(16)
-    self.priorityRequests = table.create(8) -- High-priority requests
+    -- Pre-allocated tables for maximum performance with object pooling
+    self.pendingRequests = table.create(64) -- Increased size
+    self.pendingValidations = table.create(32) -- Increased size
+    self.priorityRequests = table.create(16) -- Increased priority queue
     self.lastBatchTime = 0
     self.batchTimer = nil
+    
+    -- Object pools for memory optimization
+    self.requestPool = table.create(_MAX_REQUEST_POOL_SIZE)
+    self.validationPool = table.create(_MAX_VALIDATION_POOL_SIZE)
+    self.poolIndex = 0
+    
+    -- Performance counters
+    self.batchCount = 0
+    self.totalRequestsProcessed = 0
     
     -- Set up network events
     local remoteFolder = ReplicatedStorage:FindFirstChild("Remotes") :: Folder?
@@ -81,16 +95,17 @@ end
 function NetworkBatchProcessor:ShouldBatch(): boolean
     local now = tick()
     local timeSinceLastBatch = now - self.lastBatchTime
+    local totalPending = #self.pendingRequests + #self.priorityRequests
     
-    -- Immediate batch for priority requests
-    if #self.priorityRequests > 0 then
+    -- Immediate batch for priority requests with optimized thresholds
+    if #self.priorityRequests >= PRIORITY_BATCH_SIZE then
         return true
     end
     
-    -- Ultra-fast batching logic - more aggressive
-    return #self.pendingRequests >= BATCH_SIZE or 
-           timeSinceLastBatch >= BATCH_INTERVAL or
-           (timeSinceLastBatch >= MAX_BATCH_WAIT and #self.pendingRequests > 0)
+    -- Optimized batching logic with better performance characteristics
+    return totalPending >= BATCH_SIZE or 
+           (timeSinceLastBatch >= BATCH_INTERVAL and totalPending > 0) or
+           (timeSinceLastBatch >= MAX_BATCH_WAIT and totalPending > 0)
 end
 
 function NetworkBatchProcessor:AddRequest(request: any): ()
@@ -99,8 +114,8 @@ function NetworkBatchProcessor:AddRequest(request: any): ()
     
     if isPriority then
         table.insert(self.priorityRequests, request)
-        -- Immediate batch for critical actions
-        if #self.priorityRequests >= 3 then
+        -- More aggressive immediate batching for critical actions
+        if #self.priorityRequests >= PRIORITY_BATCH_SIZE then
             self:ProcessBatch()
         end
     else
@@ -111,6 +126,9 @@ function NetworkBatchProcessor:AddRequest(request: any): ()
             self:ProcessBatch()
         end
     end
+    
+    -- Update performance counters
+    self.totalRequestsProcessed = (self.totalRequestsProcessed :: number) + 1
 end
 
 function NetworkBatchProcessor:_isPriorityRequest(request: any): boolean
@@ -140,28 +158,32 @@ function NetworkBatchProcessor:ProcessBatch(): ()
         return
     end
     
-    -- Merge priority and regular requests, with priority first
-    local allRequests = table.create(#self.priorityRequests + #self.pendingRequests)
+    local priorityCount = #self.priorityRequests
+    local regularCount = #self.pendingRequests
+    local totalCount = priorityCount + regularCount
     
-    -- Priority requests go first
-    for i = 1, #self.priorityRequests do
+    -- Use pre-allocated array or create optimally sized one
+    local allRequests = table.create(totalCount)
+    
+    -- Priority requests go first - optimized copying
+    for i = 1, priorityCount do
         allRequests[i] = self.priorityRequests[i]
     end
     
-    -- Add regular requests
-    local offset = #self.priorityRequests
-    for i = 1, #self.pendingRequests do
-        allRequests[offset + i] = self.pendingRequests[i]
+    -- Add regular requests - optimized copying
+    for i = 1, regularCount do
+        allRequests[priorityCount + i] = self.pendingRequests[i]
     end
     
     local batch: NetworkBatch = {
         timestamp = workspace:GetServerTimeNow(),
         requests = allRequests,
-        validations = table.clone(self.pendingValidations),
-        priority = #self.priorityRequests > 0, -- Flag for server priority handling
+        validations = self.pendingValidations, -- Direct reference instead of clone for performance
+        priority = priorityCount > 0, -- Flag for server priority handling
+        batchId = self.batchCount, -- Add batch ID for tracking
     }
     
-    -- Send batch with error handling
+    -- Send batch with optimized error handling
     if self.batchRemote then
         local success, err = pcall(function()
             if RunService:IsClient() then
@@ -182,33 +204,68 @@ function NetworkBatchProcessor:ProcessBatch(): ()
     table.clear(self.pendingValidations)
     table.clear(self.priorityRequests)
     self.lastBatchTime = tick()
+    self.batchCount = (self.batchCount :: number) + 1
 end
 
 function NetworkBatchProcessor:HeartbeatUpdate(): ()
     if self:ShouldBatch() then
         self:ProcessBatch()
     end
+    
+    -- Periodic memory cleanup to prevent memory leaks
+    if self.batchCount % 100 == 0 then
+        self:_cleanupMemory()
+    end
 end
 
--- Compression utilities for network optimization
+-- Memory cleanup function for better performance
+function NetworkBatchProcessor:_cleanupMemory(): ()
+    -- Clear object pools if they get too large
+    if #self.requestPool > _MAX_REQUEST_POOL_SIZE then
+        table.clear(self.requestPool)
+    end
+    if #self.validationPool > _MAX_VALIDATION_POOL_SIZE then
+        table.clear(self.validationPool)
+    end
+    
+    -- Reset pool index
+    self.poolIndex = 0
+end
+
+-- Optimized compression utilities for network optimization
 local NetworkCompression = {}
 
+-- Pre-allocated tables for compression to reduce GC pressure
+local _compressedRequestCache = {}
+local _compressedValidationCache = {}
+
 function NetworkCompression.CompressRequest(request: any): any
-    -- Simple compression by removing redundant data
-    return {
-        id = request.predictionId,
-        a = request.abilityId,
-        t = request.timestamp,
-        d = request.inputData and {
-            p = request.inputData.position,
-            d = request.inputData.direction,
-            m = request.inputData.mouseHit,
-        } or nil,
-    }
+    -- Optimized compression with reduced object creation
+    local compressed = _compressedRequestCache[1]
+    if not compressed then
+        compressed = {}
+        _compressedRequestCache[1] = compressed
+    end
+    
+    compressed.id = request.predictionId
+    compressed.a = request.abilityId
+    compressed.t = request.timestamp
+    
+    -- Optimized input data compression
+    if request.inputData then
+        if not compressed.d then compressed.d = {} end
+        compressed.d.p = request.inputData.position
+        compressed.d.d = request.inputData.direction
+        compressed.d.m = request.inputData.mouseHit
+    else
+        compressed.d = nil
+    end
+    
+    return compressed
 end
 
 function NetworkCompression.DecompressRequest(compressed: any): any
-    -- Decompress the request
+    -- Optimized decompression with object reuse
     return {
         predictionId = compressed.id,
         abilityId = compressed.a,
@@ -222,17 +279,29 @@ function NetworkCompression.DecompressRequest(compressed: any): any
 end
 
 function NetworkCompression.CompressValidation(validation: any): any
-    return {
-        id = validation.predictionId,
-        s = validation.success,
-        r = validation.reason,
-        st = validation.correctedState and {
-            p = validation.correctedState.position,
-            v = validation.correctedState.velocity,
-            h = validation.correctedState.health,
-            st = validation.correctedState.stamina,
-        } or nil,
-    }
+    -- Optimized validation compression
+    local compressed = _compressedValidationCache[1]
+    if not compressed then
+        compressed = {}
+        _compressedValidationCache[1] = compressed
+    end
+    
+    compressed.id = validation.predictionId
+    compressed.s = validation.success
+    compressed.r = validation.reason
+    
+    -- Optimized state compression
+    if validation.correctedState then
+        if not compressed.st then compressed.st = {} end
+        compressed.st.p = validation.correctedState.position
+        compressed.st.v = validation.correctedState.velocity
+        compressed.st.h = validation.correctedState.health
+        compressed.st.st = validation.correctedState.stamina
+    else
+        compressed.st = nil
+    end
+    
+    return compressed
 end
 
 function NetworkCompression.DecompressValidation(compressed: any): any
@@ -252,7 +321,7 @@ function NetworkCompression.DecompressValidation(compressed: any): any
     }
 end
 
--- Main optimized network manager
+-- Optimized main network manager
 local OptimizedNetworkManager = {}
 OptimizedNetworkManager.__index = OptimizedNetworkManager
 
@@ -267,17 +336,30 @@ function OptimizedNetworkManager.new()
         batchesSent = 0,
         averageBatchSize = 0,
         networkLatency = 0,
+        compressionRatio = 0,
+        lastUpdateTime = 0,
     }
+    
+    -- Performance optimization: cache frequently used values
+    self._lastStatsUpdate = 0
+    self._statsUpdateInterval = _STATS_UPDATE_INTERVAL
     
     return self
 end
 
 function OptimizedNetworkManager:SendPredictionRequest(request: any): ()
-    self.networkStats.requestsSent = (self.networkStats.requestsSent :: number) + 1
+    -- Optimized stats tracking with reduced frequency
+    local now = tick()
+    if now - self._lastStatsUpdate > self._statsUpdateInterval then
+        self.networkStats.requestsSent = (self.networkStats.requestsSent :: number) + 1
+        self._lastStatsUpdate = now
+    end
     
-    -- Compress if enabled
-    local processedRequest = self.compressionEnabled and 
-        NetworkCompression.CompressRequest(request) or request
+    -- Compress if enabled with optimized path
+    local processedRequest = request
+    if self.compressionEnabled then
+        processedRequest = NetworkCompression.CompressRequest(request)
+    end
     
     -- Add to batch processor
     self.batchProcessor:AddRequest(processedRequest)
@@ -286,23 +368,32 @@ end
 function OptimizedNetworkManager:SendValidationResult(validation: any): ()
     self.networkStats.validationsReceived = (self.networkStats.validationsReceived :: number) + 1
     
-    -- Compress if enabled
-    local processedValidation = self.compressionEnabled and 
-        NetworkCompression.CompressValidation(validation) or validation
+    -- Compress if enabled with optimized path
+    local processedValidation = validation
+    if self.compressionEnabled then
+        processedValidation = NetworkCompression.CompressValidation(validation)
+    end
     
     -- Add to batch processor
     self.batchProcessor:AddValidation(processedValidation)
 end
 
 function OptimizedNetworkManager:GetNetworkStats(): {[string]: number}
-    return table.clone(self.networkStats)
+    -- Update batch statistics efficiently
+    local processor = self.batchProcessor
+    if processor.batchCount > 0 then
+        self.networkStats.averageBatchSize = processor.totalRequestsProcessed / processor.batchCount
+        self.networkStats.batchesSent = processor.batchCount
+    end
+    
+    return self.networkStats -- Return direct reference for performance
 end
 
 function OptimizedNetworkManager:EnableCompression(enabled: boolean): ()
     self.compressionEnabled = enabled
 end
 
--- Adaptive network optimization (adjusts based on performance)
+-- Optimized adaptive network optimization (adjusts based on performance)
 local AdaptiveNetworkOptimizer = {}
 AdaptiveNetworkOptimizer.__index = AdaptiveNetworkOptimizer
 
@@ -314,9 +405,14 @@ function AdaptiveNetworkOptimizer.new(networkManager: any)
         averageLatency = 0,
         packetLoss = 0,
         throughput = 0,
+        adaptationCount = 0,
     }
     
-    -- Start performance monitoring
+    -- Optimization state
+    self.lastOptimizationTime = 0
+    self.optimizationInterval = 3 -- Faster adaptation (3 seconds)
+    
+    -- Start performance monitoring with optimized frequency
     task.spawn(function()
         self:MonitorPerformance()
     end)
@@ -326,20 +422,41 @@ end
 
 function AdaptiveNetworkOptimizer:MonitorPerformance(): ()
     while true do
-        task.wait(5) -- Check every 5 seconds
+        task.wait(self.optimizationInterval)
+        
+        local now = tick()
+        if now - self.lastOptimizationTime < self.optimizationInterval then
+            continue
+        end
         
         local stats = self.networkManager:GetNetworkStats()
         
-        -- Adaptive optimization based on performance
-        if stats.averageBatchSize < 3 then
-            -- Low batch efficiency - reduce batch interval
-            BATCH_INTERVAL = math.max(0.016, BATCH_INTERVAL * 0.9) -- Minimum 60 FPS
-        elseif stats.averageBatchSize > 8 then
-            -- High batch efficiency - can increase interval slightly
-            BATCH_INTERVAL = math.min(0.1, BATCH_INTERVAL * 1.1) -- Maximum 10 FPS
+        -- More responsive adaptive optimization
+        local avgBatchSize = stats.averageBatchSize or 0
+        
+        if avgBatchSize < 2 then
+            -- Very low batch efficiency - aggressive optimization
+            BATCH_INTERVAL = math.max(0.008, BATCH_INTERVAL * 0.8) -- Down to 125 FPS
+            BATCH_SIZE = math.max(8, BATCH_SIZE - 2)
+        elseif avgBatchSize < 4 then
+            -- Low batch efficiency - moderate optimization
+            BATCH_INTERVAL = math.max(0.016, BATCH_INTERVAL * 0.9) -- Down to 60 FPS
+        elseif avgBatchSize > 12 then
+            -- High batch efficiency - can relax constraints
+            BATCH_INTERVAL = math.min(0.033, BATCH_INTERVAL * 1.1) -- Up to 30 FPS
+            BATCH_SIZE = math.min(32, BATCH_SIZE + 1)
+        elseif avgBatchSize > 8 then
+            -- Good batch efficiency - slight relaxation
+            BATCH_INTERVAL = math.min(0.025, BATCH_INTERVAL * 1.05) -- Up to 40 FPS
         end
         
-        print(`Network Performance: Batch interval: {string.format("%.3f", BATCH_INTERVAL)}s, Avg batch size: {stats.averageBatchSize}`)
+        self.performanceMetrics.adaptationCount = (self.performanceMetrics.adaptationCount :: number) + 1
+        self.lastOptimizationTime = now
+        
+        -- Optimized logging with less frequent updates
+        if self.performanceMetrics.adaptationCount % 5 == 0 then
+            print(`Network Optimization #${self.performanceMetrics.adaptationCount}: Interval: ${string.format("%.3f", BATCH_INTERVAL)}s, Batch size: ${BATCH_SIZE}, Avg: ${string.format("%.1f", avgBatchSize)}`)
+        end
     end
 end
 

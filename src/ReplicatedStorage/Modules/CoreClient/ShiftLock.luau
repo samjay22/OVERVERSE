@@ -1,9 +1,9 @@
 --[[
-    Provides smooth shift lock functionality for the character camera system.
-    Handles transitions, character rotation, and mouse behavior.
+    Enhanced Shift Lock Camera System
+    Provides smooth shift lock functionality with target locking capabilities
     
-    @author: Zach
-    @version: 1.0.0
+    @author: Zach (Enhanced)
+    @version: 2.0.0
 ]]
 
 --// Services \\--
@@ -13,9 +13,10 @@ local Workspace = game:GetService("Workspace")
 local ContextActionService = game:GetService("ContextActionService")
 local UserInputService = game:GetService("UserInputService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TweenService = game:GetService("TweenService")
 
 --// Dependencies \\--
-local SharedUtils = ReplicatedStorage.Modules.Utility
+local SharedUtils = game.ReplicatedStorage.Modules.Utility
 local Cleaner = require(SharedUtils.Cleaner)
 local Spring = require(SharedUtils.Spring)
 local Constants = require(SharedUtils.Constants)
@@ -24,446 +25,513 @@ local Constants = require(SharedUtils.Constants)
 local LocalPlayer = Players.LocalPlayer
 local PlayerMouse = LocalPlayer:GetMouse()
 local Camera = Workspace.CurrentCamera
-local VECTOR3_ZERO = Vector3.new(0, 0, 0)
+
+--// Optimized Constants \\--
+local VECTOR3_ZERO = Vector3.zero
 local CFrame_new = CFrame.new
 local CFrame_Angles = CFrame.Angles
+local math_rad = math.rad
+local math_deg = math.deg
+local math_acos = math.acos
+local math_min = math.min
+local math_max = math.max
+local tick = tick
+
+--// Enums \\--
+local ShiftLockMode = {
+    OFF = 0,
+    SHIFT_LOCK = 1,
+    TARGET_LOCK = 2
+}
 
 --// Types \\--
 type ShiftLockConfig = {
+    -- Core Settings
     MOBILE_SUPPORT: boolean,
     SMOOTH_CHARACTER_ROTATION: boolean,
     CHARACTER_ROTATION_SPEED: number,
+    
+    -- Transition Settings
     TRANSITION_SPRING_DAMPER: number,
     CAMERA_TRANSITION_IN_SPEED: number,
     CAMERA_TRANSITION_OUT_SPEED: number,
+    
+    -- Camera Settings
     LOCKED_CAMERA_OFFSET: Vector3,
+    TARGET_LOCK_OFFSET: Vector3,
     LOCKED_MOUSE_ICON: string,
+    
+    -- Input Settings
     SHIFT_LOCK_KEYBINDS: {Enum.KeyCode},
+    TARGET_LOCK_BUTTON: Enum.UserInputType,
+    
+    -- Behavior Settings
     AUTO_ENABLE: boolean,
     ALLOW_TOGGLE: boolean,
-    MOVEMENT_ROTATION_DELAY: number
-}
-
-type ShiftLockClass = {
-    new: () -> ShiftLockClass,
-    Enable: (self: ShiftLockClass) -> (),
-    Disable: (self: ShiftLockClass) -> (),
-    IsEnabled: (self: ShiftLockClass) -> boolean,
-    ToggleShiftLock: (self: ShiftLockClass, Enable: boolean?) -> (),
+    MOVEMENT_ROTATION_DELAY: number,
     
-    _refreshCharacterVariables: (self: ShiftLockClass) -> (),
-    _doShiftLockSwitch: (self: ShiftLockClass, _: any, State: Enum.UserInputState) -> Enum.ContextActionResult,
-    _updateMouseState: (self: ShiftLockClass) -> (),
-    _updateMouseIcon: (self: ShiftLockClass) -> (),
-    _transitionLockOffset: (self: ShiftLockClass) -> ()
+    -- Target Lock Settings
+    TARGET_LOCK_ENABLED: boolean,
+    TARGET_LOCK_ANGLE_THRESHOLD: number,
+    TARGET_LOCK_MAX_DISTANCE: number,
+    TARGET_LOCK_SMOOTH_SPEED: number,
+    TARGET_PRIORITY_PLAYERS: boolean,
+    
+    -- Performance Settings
+    UPDATE_RATE: number,
+    TARGET_SCAN_INTERVAL: number
 }
 
---// Configuration \\--
+--// Enhanced Configuration \\--
 local Config: ShiftLockConfig = table.freeze({
-    MOBILE_SUPPORT = false,
+    -- Core Settings
+    MOBILE_SUPPORT = true,
     SMOOTH_CHARACTER_ROTATION = true,
     CHARACTER_ROTATION_SPEED = 4,
-    TRANSITION_SPRING_DAMPER = 0.5,
-    CAMERA_TRANSITION_IN_SPEED = 12,
-    CAMERA_TRANSITION_OUT_SPEED = 12,
-    LOCKED_CAMERA_OFFSET = Constants.SHIFT_LOCK_OFFSET,
+    
+    -- Transition Settings
+    TRANSITION_SPRING_DAMPER = 1,
+    CAMERA_TRANSITION_IN_SPEED = 6,
+    CAMERA_TRANSITION_OUT_SPEED = 6,
+    
+    -- Camera Settings
+    LOCKED_CAMERA_OFFSET = Constants.SHIFT_LOCK_OFFSET or Vector3.new(2, 0, 0),
+    TARGET_LOCK_OFFSET = Vector3.new(3, 2, 10),
     LOCKED_MOUSE_ICON = "rbxassetid://9126971632",
+    
+    -- Input Settings
     SHIFT_LOCK_KEYBINDS = {Enum.KeyCode.LeftShift, Enum.KeyCode.RightShift},
+    TARGET_LOCK_BUTTON = Enum.UserInputType.MouseButton3,
+    
+    -- Behavior Settings
     AUTO_ENABLE = true,
     ALLOW_TOGGLE = false,
-    MOVEMENT_ROTATION_DELAY = 0 -- Delay before applying rotation when moving
+    MOVEMENT_ROTATION_DELAY = 0,
+    
+    -- Target Lock Settings
+    TARGET_LOCK_ENABLED = true,
+    TARGET_LOCK_ANGLE_THRESHOLD = 45, -- Degrees
+    TARGET_LOCK_MAX_DISTANCE = 100, -- Studs
+    TARGET_LOCK_SMOOTH_SPEED = 8,
+    TARGET_PRIORITY_PLAYERS = true,
+    
+    -- Performance Settings
+    UPDATE_RATE = 1/120, -- 120 FPS
+    TARGET_SCAN_INTERVAL = 0.05 -- Scan for targets every 50ms
 })
 
 --// Module \\--
-local ShiftLock = {} :: ShiftLockClass
+local ShiftLock = {}
 ShiftLock.__index = ShiftLock
 
-local ShiftLockState = Instance.new("BoolValue")
+-- State Management
+local ShiftLockState = Instance.new("IntValue")
 ShiftLockState.Name = "ShiftLockState"
-ShiftLockState.Value = false
+ShiftLockState.Value = ShiftLockMode.OFF
 ShiftLockState.Parent = ReplicatedStorage
 
 -------------------------
 --// Private Methods \\--
 -------------------------
 
---- Refreshes character-related variables when character changes
---- @return nil
+--- Optimized angle calculation between vectors
+local function getAngleBetweenVectors(a: Vector3, b: Vector3): number
+    local dot = a:Dot(b)
+    local magnitudes = a.Magnitude * b.Magnitude
+    if magnitudes == 0 then return 180 end
+    
+    local cosAngle = math_min(math_max(dot / magnitudes, -1), 1)
+    return math_deg(math_acos(cosAngle))
+end
 
+--- Calculate priority score for target selection
+local function calculateTargetPriority(target, distance: number, angle: number, isPlayer: boolean): number
+    local score = 0
+    
+    -- Distance factor (closer = higher priority)
+    score = score + (1 - (distance / Config.TARGET_LOCK_MAX_DISTANCE)) * 50
+    
+    -- Angle factor (more centered = higher priority)
+    score = score + (1 - (angle / Config.TARGET_LOCK_ANGLE_THRESHOLD)) * 30
+    
+    -- Player priority bonus
+    if isPlayer and Config.TARGET_PRIORITY_PLAYERS then
+        score = score + 20
+    end
+    
+    return score
+end
+
+--- Refreshes character-related variables
 function ShiftLock:_refreshCharacterVariables()
-	self.Character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
-	self.RootPart = self.Character:WaitForChild("HumanoidRootPart")
-	self.Humanoid = self.Character:WaitForChild("Humanoid")
-	self.Head = self.Character:WaitForChild("Head")
+    self.Character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+    self.RootPart = self.Character:WaitForChild("HumanoidRootPart")
+    self.Humanoid = self.Character:WaitForChild("Humanoid")
+    self.Head = self.Character:WaitForChild("Head")
+    
+    -- Reset state on character respawn
+    if self.Mode ~= ShiftLockMode.OFF and Config.AUTO_ENABLE then
+        task.wait(0.1)
+        self:SetMode(ShiftLockMode.SHIFT_LOCK)
+    end
 end
 
-
-local function getAngleBetweenVectors(a, b)
-	local dotProduct = a:Dot(b)
-	local angleRadians = math.acos(dotProduct / (a.Magnitude * b.Magnitude))
-	local angleDegrees = math.deg(angleRadians)
-	return angleDegrees
+--- Enhanced target finding with caching and optimization
+function ShiftLock:_findBestTarget()
+    if not self.RootPart then return nil end
+    
+    local cameraPosition = Camera.CFrame.Position
+    local lookVector = Camera.CFrame.LookVector
+    local candidates = {}
+    
+    -- Helper function to evaluate a potential target
+    local function evaluateTarget(targetModel, isPlayer: boolean)
+        local targetRoot = targetModel:FindFirstChild("HumanoidRootPart") or targetModel:FindFirstChild("Head")
+        if not targetRoot then return end
+        
+        local humanoid = targetModel:FindFirstChild("Humanoid")
+        if humanoid and humanoid.Health <= 0 then return end
+        
+        local toTarget = targetRoot.Position - cameraPosition
+        local distance = toTarget.Magnitude
+        
+        -- Skip if too far
+        if distance > Config.TARGET_LOCK_MAX_DISTANCE then return end
+        
+        -- Calculate angle
+        local angle = getAngleBetweenVectors(lookVector, toTarget.Unit)
+        
+        -- Skip if outside angle threshold
+        if angle > Config.TARGET_LOCK_ANGLE_THRESHOLD then return end
+        
+        -- Calculate priority score
+        local priority = calculateTargetPriority(targetModel, distance, angle, isPlayer)
+        
+        table.insert(candidates, {
+            target = targetModel,
+            distance = distance,
+            angle = angle,
+            priority = priority
+        })
+    end
+    
+    -- Scan players
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer and player.Character then
+            evaluateTarget(player.Character, true)
+        end
+    end
+    
+    -- Scan NPCs (with error handling)
+    local npcFolder = Workspace:FindFirstChild("World") and 
+                     Workspace.World:FindFirstChild("Living") and 
+                     Workspace.World.Living:FindFirstChild("NPCs")
+    
+    if npcFolder then
+        for _, npc in ipairs(npcFolder:GetChildren()) do
+            evaluateTarget(npc, false)
+        end
+    end
+    
+    -- Sort by priority and return best target
+    if #candidates > 0 then
+        table.sort(candidates, function(a, b)
+            return a.priority > b.priority
+        end)
+        return candidates[1].target
+    end
+    
+    return nil
 end
 
-function ShiftLock:_CheckTarget()
-	local Lookvector= Camera.CFrame.LookVector
-	local result = nil
-	local lastsangle = nil
-	
-	for i ,v in Players:GetPlayers() do
-		if v == LocalPlayer then continue end
-		local directionv = (v.Character.Head.Position - Camera.CFrame.Position).Unit
-		local angle = getAngleBetweenVectors(Lookvector, directionv)
-		if angle < 100 then
-			if lastsangle then
-				if lastsangle> angle then
-					result = v
-					lastsangle = angle
-				end
-			else
-				result = v
-				lastsangle = angle
-				
-			end
-		end
-	end
-
-	for i ,v in game.Workspace.World.Living.NPCs:GetChildren() do
-		local directionv = (v.Head.Position - Camera.CFrame.Position).Unit
-		local angle = getAngleBetweenVectors(Lookvector, directionv)
-		if angle < 100 then
-			if lastsangle then
-				if lastsangle> angle then
-					result = v
-					lastsangle = angle
-				end
-			else
-				result = v
-				lastsangle = angle
-
-			end
-		end
-	end
-	print(result)
-	self.Target = result
-	return result
-end
-
-
---- Handles the shift lock key press event
---- @param _ any
---- @param State Enum.UserInputState
---- @return Enum.ContextActionResult
-function ShiftLock:_doShiftLockSwitch(_, State: Enum.UserInputState)
-    if State ~= Enum.UserInputState.Begin then
+--- Handle shift lock key press
+function ShiftLock:_handleShiftLockInput(_, state: Enum.UserInputState)
+    if state ~= Enum.UserInputState.Begin then
         return Enum.ContextActionResult.Pass
     end
-
-    if not Config.ALLOW_TOGGLE then
-		if Config.AUTO_ENABLE and not self.Enabled then
-            self:ToggleShiftLock(2)
-        end
-        return Enum.ContextActionResult.Sink
+    
+    if not Config.ALLOW_TOGGLE and Config.AUTO_ENABLE and self.Mode == ShiftLockMode.OFF then
+        self:SetMode(ShiftLockMode.SHIFT_LOCK)
+    elseif Config.ALLOW_TOGGLE then
+        self:ToggleShiftLock()
     end
-
-    self:ToggleShiftLock()
+    
     return Enum.ContextActionResult.Sink
 end
 
-function ShiftLock:_doLockSwitch(_, State: Enum.UserInputState)
-	if State ~= Enum.UserInputState.Begin then
-		return Enum.ContextActionResult.Pass
-	end
-
-	if not Config.ALLOW_TOGGLE then
-		if Config.AUTO_ENABLE and not self.Enabled then
-			self:ToggleLock(2)
-		end
-		return Enum.ContextActionResult.Sink
-	end
-	local target = self:_CheckTarget()
-	print(target)
-	if not target then
-
-		return Enum.ContextActionResult.Sink
-	end
-	warn(self.Enabled)
-	self:ToggleLock()
-	return Enum.ContextActionResult.Sink
-end
---- Updates the mouse behavior based on shift lock state
---- @return nil
-function ShiftLock:_updateMouseState()
-    UserInputService.MouseBehavior = self.Enabled and Enum.MouseBehavior.LockCenter or Enum.MouseBehavior.Default
-end
-
---- Updates the mouse icon based on shift lock state
---- @return nil
-function ShiftLock:_updateMouseIcon()
-    PlayerMouse.Icon = self.Enabled and Config.LOCKED_MOUSE_ICON or ""
-end
-
---- Transitions the camera offset using spring physics
---- @return nil
-function ShiftLock:_transitionLockOffset()
-    if self.Enabled == true then
-        self._cameraOffsetSpring.Speed = Config.CAMERA_TRANSITION_IN_SPEED
-		self._cameraOffsetSpring.Target = Config.LOCKED_CAMERA_OFFSET
-	elseif self.Enabled == 2 then -- 2 means lock on target mode
-
-		self._cameraOffsetSpring.Speed = Config.CAMERA_TRANSITION_IN_SPEED
-		self._cameraOffsetSpring.Target = Vector3.new(3,2,10)
-    else
-        self._cameraOffsetSpring.Speed = Config.CAMERA_TRANSITION_OUT_SPEED
-        self._cameraOffsetSpring.Target = VECTOR3_ZERO
+--- Handle target lock input
+function ShiftLock:_handleTargetLockInput(_, state: Enum.UserInputState)
+    if state ~= Enum.UserInputState.Begin or not Config.TARGET_LOCK_ENABLED then
+        return Enum.ContextActionResult.Pass
     end
+    
+    if self.Mode == ShiftLockMode.TARGET_LOCK then
+        self:SetMode(ShiftLockMode.OFF)
+    else
+        local target = self:_findBestTarget()
+        if target then
+            self.CurrentTarget = target
+            self:SetMode(ShiftLockMode.TARGET_LOCK)
+        end
+    end
+    
+    return Enum.ContextActionResult.Sink
+end
+
+--- Update mouse behavior
+function ShiftLock:_updateMouseState()
+    UserInputService.MouseBehavior = self.Mode ~= ShiftLockMode.OFF and 
+                                    Enum.MouseBehavior.LockCenter or 
+                                    Enum.MouseBehavior.Default
+end
+
+--- Update mouse icon
+function ShiftLock:_updateMouseIcon()
+    PlayerMouse.Icon = self.Mode ~= ShiftLockMode.OFF and Config.LOCKED_MOUSE_ICON or ""
+end
+
+--- Transition camera offset
+function ShiftLock:_transitionCameraOffset()
+    local targetOffset = VECTOR3_ZERO
+    local transitionSpeed = Config.CAMERA_TRANSITION_OUT_SPEED
+    
+    if self.Mode == ShiftLockMode.SHIFT_LOCK then
+        targetOffset = Config.LOCKED_CAMERA_OFFSET
+        transitionSpeed = Config.CAMERA_TRANSITION_IN_SPEED
+    elseif self.Mode == ShiftLockMode.TARGET_LOCK then
+        targetOffset = Config.TARGET_LOCK_OFFSET
+        transitionSpeed = Config.CAMERA_TRANSITION_IN_SPEED
+    end
+    
+    self._cameraOffsetSpring.Speed = transitionSpeed
+    self._cameraOffsetSpring.Target = targetOffset
+end
+
+--- Main update loop for camera and rotation
+function ShiftLock:_updateCameraAndRotation(deltaTime: number)
+    if not self.Head or self.Head.LocalTransparencyModifier > 0.6 then return end
+    
+    local distance = (self.Head.Position - Camera.CFrame.Position).Magnitude
+    if distance <= 1 then return end
+    
+    -- Handle different modes
+    if self.Mode == ShiftLockMode.TARGET_LOCK and self.CurrentTarget then
+        local targetRoot = self.CurrentTarget:FindFirstChild("HumanoidRootPart")
+        if targetRoot then
+            -- Smooth target rotation
+            local targetLookAt = CFrame.lookAt(self.RootPart.Position, 
+                                              Vector3.new(targetRoot.Position.X, self.RootPart.Position.Y, targetRoot.Position.Z))
+            self.RootPart.CFrame = self.RootPart.CFrame:Lerp(targetLookAt, deltaTime * Config.TARGET_LOCK_SMOOTH_SPEED)
+            
+            -- Update camera for target lock
+            local cameraOffset = self.RootPart.CFrame * CFrame_new(self._cameraOffsetSpring.Position)
+            Camera.CFrame = CFrame.lookAt(cameraOffset.Position, targetRoot.Position)
+        else
+            -- Target lost, revert to shift lock
+            self:SetMode(ShiftLockMode.SHIFT_LOCK)
+        end
+    else
+        -- Standard shift lock camera offset
+        Camera.CFrame = Camera.CFrame * CFrame_new(self._cameraOffsetSpring.Position)
+    end
+    
+    -- Ensure mouse stays locked
+    if self.Mode ~= ShiftLockMode.OFF and UserInputService.MouseBehavior ~= Enum.MouseBehavior.LockCenter then
+        self:_updateMouseState()
+    end
+end
+
+--- Handle character rotation
+function ShiftLock:_handleCharacterRotation(deltaTime: number)
+    if not self.Humanoid or not self.RootPart or self.Mode == ShiftLockMode.OFF then
+        return
+    end
+    
+    self.Humanoid.AutoRotate = false
+    
+    if self.Humanoid.Sit then return end
+    
+    -- Skip rotation for target lock (handled separately)
+    if self.Mode == ShiftLockMode.TARGET_LOCK then return end
+    
+    -- Movement tracking
+    local currentMoveDirection = self.Humanoid.MoveDirection
+    local isMoving = currentMoveDirection.Magnitude > 0.1
+    local wasMoving = self._lastMoveDirection.Magnitude > 0.1
+    
+    if isMoving and not wasMoving then
+        self._movementStartTime = tick()
+    end
+    
+    local timeSinceMovementStart = tick() - self._movementStartTime
+    
+    -- Calculate rotation
+    local _, y = Camera.CFrame:ToOrientation()
+    local targetCFrame = CFrame_new(self.RootPart.Position) * CFrame_Angles(0, y, 0)
+    
+    if Config.SMOOTH_CHARACTER_ROTATION then
+        local rotationSpeed = Config.CHARACTER_ROTATION_SPEED
+        
+        -- Adjust rotation speed based on movement
+        if isMoving and timeSinceMovementStart < Config.MOVEMENT_ROTATION_DELAY then
+            rotationSpeed = rotationSpeed * 0.2
+        elseif isMoving then
+            rotationSpeed = rotationSpeed * 0.6
+        end
+        
+        local lerpAlpha = math_min(deltaTime * 5 * rotationSpeed, 1)
+        self.RootPart.CFrame = self.RootPart.CFrame:Lerp(targetCFrame, lerpAlpha)
+    else
+        if not isMoving then
+            self.RootPart.CFrame = targetCFrame
+        end
+    end
+    
+    self._lastMoveDirection = currentMoveDirection
 end
 
 -------------------------
 --// Public Methods \\--
 -------------------------
 
---- Creates a new ShiftLock instance
--- @return ShiftLockClass
+--- Create new ShiftLock instance
 function ShiftLock.new()
     local self = setmetatable({}, ShiftLock)
     
+    -- Maids for cleanup
     self._runtimeMaid = Cleaner.new()
-    self._shiftlockMaid = Cleaner.new()
+    self._modeMaid = Cleaner.new()
+    
+    -- Spring for camera transitions
     self._cameraOffsetSpring = Spring.new(VECTOR3_ZERO)
     self._cameraOffsetSpring.Damper = Config.TRANSITION_SPRING_DAMPER
     
-    self.Enabled = false
-    self._lastMoveDirection = Vector3.new()
+    -- State
+    self.Mode = ShiftLockMode.OFF
+    self.CurrentTarget = nil
+    self._lastMoveDirection = VECTOR3_ZERO
     self._movementStartTime = 0
-        
+    self._lastTargetScan = 0
+    
     return self
 end
 
---- Enables the shift lock system
---- @return nil
+--- Enable the shift lock system
 function ShiftLock:Enable()
     self:_refreshCharacterVariables()
     
     if Config.AUTO_ENABLE then
         task.wait(0.1)
-        self:ToggleShiftLock(true)
+        self:SetMode(ShiftLockMode.SHIFT_LOCK)
     end
     
+    -- Character respawn handler
     self._runtimeMaid:Connect(LocalPlayer.CharacterAdded, function()
         self:_refreshCharacterVariables()
-        if Config.AUTO_ENABLE then
-            task.wait(0.1)
-            self:ToggleShiftLock(true)
-        end
     end)
-
-	ContextActionService:BindActionAtPriority(
-		"LockSwitchAction",
-		function(Name, State, Input) return self:_doLockSwitch(Name, State, Input) end,
-		Config.MOBILE_SUPPORT,
-		Enum.ContextActionPriority.Medium.Value,
-		Enum.UserInputType.MouseButton3
-	)
+    
+    -- Bind inputs
     ContextActionService:BindActionAtPriority(
         "ShiftLockSwitchAction",
-        function(Name, State, Input) return self:_doShiftLockSwitch(Name, State, Input) end,
+        function(...) return self:_handleShiftLockInput(...) end,
         Config.MOBILE_SUPPORT,
         Enum.ContextActionPriority.Medium.Value,
         unpack(Config.SHIFT_LOCK_KEYBINDS)
     )
     
-    self._runtimeMaid:Connect(RunService.RenderStepped, function()
-        if self.Head.LocalTransparencyModifier > 0.6 then return end
-        local cameraCFrame = Camera.CFrame
-        local distance = (self.Head.Position - cameraCFrame.Position).Magnitude
-        
-        if distance <= 1 then return end
-		if self.Enabled == 2 then
-			self.RootPart.CFrame = CFrame.new(self.RootPart.Position,self.Target.HumanoidRootPart.Position)
-
-			Camera.CFrame = CFrame.lookAt(self.RootPart.CFrame * CFrame_new(Vector3.new(3,2,10)).Position,self.Target.HumanoidRootPart.Position)
-
-		else
-			Camera.CFrame = Camera.CFrame * CFrame_new(self._cameraOffsetSpring.Position)
-
-		end
-
-        if self.Enabled and UserInputService.MouseBehavior ~= Enum.MouseBehavior.LockCenter then
-            self:_updateMouseState()
-        end
+    if Config.TARGET_LOCK_ENABLED then
+        ContextActionService:BindActionAtPriority(
+            "TargetLockAction",
+            function(...) return self:_handleTargetLockInput(...) end,
+            Config.MOBILE_SUPPORT,
+            Enum.ContextActionPriority.Medium.Value,
+            Config.TARGET_LOCK_BUTTON
+        )
+    end
+    
+    -- Main update loop
+    self._runtimeMaid:Connect(RunService.RenderStepped, function(deltaTime)
+        self:_updateCameraAndRotation(deltaTime)
     end)
 end
 
---- Disables the shift lock system
---- @return nil
+--- Disable the system
 function ShiftLock:Disable()
+    self:SetMode(ShiftLockMode.OFF)
     self._runtimeMaid:Destroy()
-    self._shiftlockMaid:Destroy()
+    self._modeMaid:Destroy()
     ContextActionService:UnbindAction("ShiftLockSwitchAction")
+    ContextActionService:UnbindAction("TargetLockAction")
 end
 
---- Checks if shift lock is currently enabled
---- @return boolean
-function ShiftLock:IsEnabled(): boolean
-    return self.Enabled
-end
-
---- Static function to get the current shift lock state
---- @return boolean
-function ShiftLock.GetIsEnabled(): boolean
-    return ShiftLockState.Value
-end
-
---- Toggles the shift lock state
---- @param Enable boolean?
---- @return nil
-function ShiftLock:ToggleShiftLock(Enable: boolean?)
-    if Enable ~= nil then
-		self.Enabled = Enable
-    else
-		self.Enabled = not self.Enabled
-    end
+--- Set the lock mode
+function ShiftLock:SetMode(mode: number)
+    if self.Mode == mode then return end
     
-    ShiftLockState.Value = self.Enabled
+    self.Mode = mode
+    ShiftLockState.Value = mode
     
     self:_updateMouseState()
     self:_updateMouseIcon()
-    self:_transitionLockOffset()
+    self:_transitionCameraOffset()
     
-    if not self.Enabled then
-        self.Humanoid.AutoRotate = true
-        self._shiftlockMaid:Clear()
-        -- Reset movement tracking
-        self._lastMoveDirection = Vector3.new()
+    -- Clear mode-specific connections
+    self._modeMaid:Clear()
+    
+    if mode == ShiftLockMode.OFF then
+        if self.Humanoid then
+            self.Humanoid.AutoRotate = true
+        end
+        self.CurrentTarget = nil
+        self._lastMoveDirection = VECTOR3_ZERO
         self._movementStartTime = 0
-        return
+    else
+        -- Setup rotation handler
+        self._modeMaid:Connect(RunService.RenderStepped, function(deltaTime)
+            self:_handleCharacterRotation(deltaTime)
+        end)
+        
+        -- Periodic target validation for target lock
+        if mode == ShiftLockMode.TARGET_LOCK then
+            self._modeMaid:Connect(RunService.Heartbeat, function()
+                if tick() - self._lastTargetScan > Config.TARGET_SCAN_INTERVAL then
+                    self._lastTargetScan = tick()
+                    
+                    -- Validate current target still exists
+                    if self.CurrentTarget then
+                        local humanoid = self.CurrentTarget:FindFirstChild("Humanoid")
+                        if not humanoid or humanoid.Health <= 0 then
+                            self:SetMode(ShiftLockMode.SHIFT_LOCK)
+                        end
+                    end
+                end
+            end)
+        end
     end
-    
-    self._shiftlockMaid:Connect(RunService.RenderStepped, function(Delta: number)
-        if not self.Humanoid or not self.RootPart then return end
-        
-        self.Humanoid.AutoRotate = not self.Enabled
-        
-        if self.Humanoid.Sit then return end
-        
-        -- Track movement state changes
-        local currentMoveDirection = self.Humanoid.MoveDirection
-        local isMoving = currentMoveDirection.Magnitude > 0.1
-        local wasMoving = self._lastMoveDirection.Magnitude > 0.1
-        
-        -- Update movement timing
-        if isMoving and not wasMoving then
-            self._movementStartTime = tick()
-        end
-        
-        local timeSinceMovementStart = tick() - self._movementStartTime
-        local humanoidState = self.Humanoid:GetState()
-        local isGrounded = humanoidState == Enum.HumanoidStateType.Running or 
-                          humanoidState == Enum.HumanoidStateType.RunningNoPhysics or
-                          humanoidState == Enum.HumanoidStateType.None
-        
-        -- Use a more gentle rotation approach that respects movement
-        if Config.SMOOTH_CHARACTER_ROTATION then
-            local _, y = Camera.CFrame:ToOrientation()
-            local targetCFrame = CFrame_new(self.RootPart.Position) * CFrame_Angles(0, y, 0)
-            
-            -- Reduce rotation speed when moving to prevent animation conflicts
-            local rotationSpeed = Config.CHARACTER_ROTATION_SPEED
-            if isMoving and timeSinceMovementStart < Config.MOVEMENT_ROTATION_DELAY then
-                rotationSpeed = rotationSpeed * 0.2 -- Very slow rotation when just starting to move
-            elseif isMoving then
-                rotationSpeed = rotationSpeed * 0.6 -- Reduced rotation when moving
-            end
-            
-            -- Use a smaller lerp step when character is moving
-            local lerpAlpha = Delta * 5 * rotationSpeed
-            self.RootPart.CFrame = self.RootPart.CFrame:Lerp(targetCFrame, lerpAlpha)
-        else
-            -- Only apply immediate rotation when not moving to avoid conflicts
-            if not isMoving or not isGrounded then
-                local _, y = Camera.CFrame:ToOrientation()
-                self.RootPart.CFrame = CFrame_new(self.RootPart.Position) * CFrame_Angles(0, y, 0)
-            end
-        end
-        
-        -- Store previous move direction for next frame
-        self._lastMoveDirection = currentMoveDirection
-    end)
 end
 
-function ShiftLock:ToggleLock(Enable)
-	if self.Enabled ~= 2 then
-		self.Enabled = 2
-	else
-		self.Enabled = false
-	end
+--- Toggle shift lock
+function ShiftLock:ToggleShiftLock()
+    if self.Mode == ShiftLockMode.SHIFT_LOCK then
+        self:SetMode(ShiftLockMode.OFF)
+    else
+        self:SetMode(ShiftLockMode.SHIFT_LOCK)
+    end
+end
 
-	ShiftLockState.Value = self.Enabled
+--- Check if enabled
+function ShiftLock:IsEnabled(): boolean
+    return self.Mode ~= ShiftLockMode.OFF
+end
 
-	self:_updateMouseState()
-	self:_updateMouseIcon()
-	self:_transitionLockOffset()
+--- Get current mode
+function ShiftLock:GetMode(): number
+    return self.Mode
+end
 
-	if not self.Enabled then
-		self.Humanoid.AutoRotate = true
-		self._shiftlockMaid:Clear()
-		-- Reset movement tracking
-		self._lastMoveDirection = Vector3.new()
-		self._movementStartTime = 0
-		return
-	end
-
-	self._shiftlockMaid:Connect(RunService.RenderStepped, function(Delta: number)
-		if not self.Humanoid or not self.RootPart then return end
-
-		self.Humanoid.AutoRotate = not self.Enabled
-
-		if self.Humanoid.Sit then return end
-
-		-- Track movement state changes
-		local currentMoveDirection = self.Humanoid.MoveDirection
-		local isMoving = currentMoveDirection.Magnitude > 0.1
-		local wasMoving = self._lastMoveDirection.Magnitude > 0.1
-		
-		-- Update movement timing
-		if isMoving and not wasMoving then
-			self._movementStartTime = tick()
-		end
-		
-		local timeSinceMovementStart = tick() - self._movementStartTime
-		local humanoidState = self.Humanoid:GetState()
-		local isGrounded = humanoidState == Enum.HumanoidStateType.Running or 
-		                  humanoidState == Enum.HumanoidStateType.RunningNoPhysics or
-		                  humanoidState == Enum.HumanoidStateType.None
-
-		-- Use a more gentle rotation approach that respects movement
-		if Config.SMOOTH_CHARACTER_ROTATION then
-			local _, y = Camera.CFrame:ToOrientation()
-			local targetCFrame = CFrame_new(self.RootPart.Position) * CFrame_Angles(0, y, 0)
-			
-			-- Reduce rotation speed when moving to prevent animation conflicts
-			local rotationSpeed = Config.CHARACTER_ROTATION_SPEED
-			if isMoving and timeSinceMovementStart < Config.MOVEMENT_ROTATION_DELAY then
-				rotationSpeed = rotationSpeed * 0.2 -- Very slow rotation when just starting to move
-			elseif isMoving then
-				rotationSpeed = rotationSpeed * 0.6 -- Reduced rotation when moving
-			end
-			
-			-- Use a smaller lerp step when character is moving
-			local lerpAlpha = Delta * 5 * rotationSpeed
-			self.RootPart.CFrame = self.RootPart.CFrame:Lerp(targetCFrame, lerpAlpha)
-		else
-			-- Only apply immediate rotation when not moving to avoid conflicts
-			if not isMoving or not isGrounded then
-				local _, y = Camera.CFrame:ToOrientation()
-				self.RootPart.CFrame = CFrame_new(self.RootPart.Position) * CFrame_Angles(0, y, 0)
-			end
-		end
-		
-		-- Store previous move direction for next frame
-		self._lastMoveDirection = currentMoveDirection
-	end)
+--- Get the global shift lock state
+function ShiftLock.GetGlobalState(): number
+    return ShiftLockState.Value
 end
 
 -------------------------

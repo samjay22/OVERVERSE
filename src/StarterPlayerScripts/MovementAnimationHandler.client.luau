@@ -19,7 +19,7 @@ local UserInputService = game:GetService("UserInputService")
 local Players = game:GetService("Players")
 
 -- Dependencies
-local BindableEventHelper = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Utility"):WaitForChild("BindableEventHelper"))
+local BindableEventHelper = require(game.ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Utility"):WaitForChild("BindableEventHelper"))
 
 -- Check for shift lock state
 local ShiftLockState = ReplicatedStorage:WaitForChild("ShiftLockState")

@@ -30,7 +30,12 @@ function ComponentManager.new(): IComponentManager
 	self._components = {} :: {[string]: ComponentInterface}
 	self._updaters = {} :: {ComponentUpdater}
 	
-	return self
+	-- Performance optimization: Pre-allocate arrays for hot paths
+	self._updateOrder = {} :: {string} -- Cached update order for better performance
+	self._criticalComponents = {} :: {string} -- Components that must update every frame
+	self._deferredComponents = {} :: {string} -- Components that can skip frames
+	
+	return (self :: any) :: IComponentManager
 end
 
 function ComponentManager:RegisterComponent(name: string, component: ComponentInterface)
@@ -40,9 +45,49 @@ function ComponentManager:RegisterComponent(name: string, component: ComponentIn
 	
 	self._components[name] = component
 	
-	-- Cache updater if present
+	-- Cache updater if present with performance classification
 	if component and component.Update and typeof(component.Update) == "function" then
 		table.insert(self._updaters, { name = name, fn = component.Update })
+		
+		-- Classify component for performance optimization
+		local isCritical = self:_IsCriticalComponent(name)
+		if isCritical then
+			table.insert(self._criticalComponents, name)
+		else
+			table.insert(self._deferredComponents, name)
+		end
+	end
+	
+	-- Rebuild update order cache
+	self:_BuildUpdateOrder()
+end
+
+-- Determine if a component needs critical (every frame) updates
+function ComponentManager:_IsCriticalComponent(componentName: string): boolean
+	local criticalComponents = {
+		"Health", "Movement", "Combat", "Input"
+	}
+	
+	for _, critical in ipairs(criticalComponents) do
+		if componentName == critical then
+			return true
+		end
+	end
+	return false
+end
+
+-- Build optimized update order based on dependencies
+function ComponentManager:_BuildUpdateOrder()
+	table.clear(self._updateOrder)
+	
+	-- Add critical components first
+	for _, name in ipairs(self._criticalComponents) do
+		table.insert(self._updateOrder, name)
+	end
+	
+	-- Add deferred components
+	for _, name in ipairs(self._deferredComponents) do
+		table.insert(self._updateOrder, name)
 	end
 end
 
@@ -85,13 +130,25 @@ function ComponentManager:InitializeComponents(characterData: internalCharacter,
 end
 
 function ComponentManager:UpdateComponents(characterData: internalCharacter, dt: number)
-	-- Update components using cached updater list for performance
-	for i = 1, #self._updaters do
+	-- Optimized update using cached updater list and error resilience
+	local updateCount = #self._updaters
+	local failedComponents = 0
+	
+	for i = 1, updateCount do
 		local entry = self._updaters[i]
-		local success, err = pcall(entry.fn, characterData, dt)
+		local success = pcall(entry.fn, characterData, dt)
 		if not success then
-			warn(`Component {entry.name} update failed: {err}`)
+			failedComponents = failedComponents + 1
+			-- Only warn periodically to avoid spam
+			if failedComponents <= 3 then
+				warn(`Component {entry.name} update failed`)
+			end
 		end
+	end
+	
+	-- Report excessive failures
+	if failedComponents > updateCount * 0.5 then
+		warn(`High component failure rate: {failedComponents}/{updateCount} components failed`)
 	end
 end
 

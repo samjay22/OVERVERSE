@@ -2,6 +2,7 @@
 -- Server-side ability validation orchestrator
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
 local _ServerScriptService = game:GetService("ServerScriptService")
 local ServerStorage = game:GetService("ServerStorage")
 local CollectionService = game:GetService("CollectionService")
@@ -9,10 +10,15 @@ local CollectionService = game:GetService("CollectionService")
 local _NetworkServer = require(game.ServerStorage.Modules.Core.NetworkServer)
 local AbilityValidationRoot = ServerStorage:WaitForChild("Modules"):WaitForChild("AbilityValidation")
 local Utils = require(AbilityValidationRoot:WaitForChild("Utils"))
+local AbilityPackageTypes = require(game.ReplicatedStorage.Modules.Types.ClientAbilityTypes)
 local Types = require(AbilityValidationRoot:WaitForChild("Types"))
 local ServerStateManager = require(AbilityValidationRoot:WaitForChild("State"):WaitForChild("ServerStateManager"))
 local AntiCheatValidator = require(AbilityValidationRoot:WaitForChild("AntiCheat"):WaitForChild("AntiCheatValidator"))
 local Remotes = require(AbilityValidationRoot:WaitForChild("Network"):WaitForChild("Remotes"))
+local AbilityTypes = require(game.ServerStorage.Modules.Types.AbilityTypes)
+
+-- Updated to use the new ServerAbilities loader system
+local ServerAbilities = require(ReplicatedStorage.Modules.ClientAbilities)
 
 local _ReplicateAbilityRequest : RemoteEvent = _NetworkServer:RegisterRemoteEvent("ReplicateAbilityRequest")
 
@@ -20,13 +26,112 @@ type AbilityId = Types.AbilityId
 type StateSnapshot = Types.StateSnapshot
 type AbilityResult = Types.AbilityResult
 type SharedAbilityContext = Types.SharedAbilityContext
-type ClientAbilityModule = Types.ClientAbilityModule
+type ServerAbilityModule = AbilityPackageTypes.ServerAbility
 type PredictionRequest = Types.PredictionRequest
 type ValidationResult = Types.ValidationResult
+type EntityRef = AbilityTypes.EntityRef
 
--- Cache ability modules to avoid repeated FindFirstChild calls
-local abilityModuleCache: {[string]: ClientAbilityModule?} = {}
-local clientAbilities = ReplicatedStorage:WaitForChild("Modules"):WaitForChild("ClientAbilities")
+-- Cache ability modules to avoid repeated GetAbility calls
+local abilityModuleCache: {[string]: ServerAbilityModule?} = {}
+
+-- Performance tracking (optional - can be disabled in production)
+local ENABLE_PERFORMANCE_TRACKING = true
+local performanceStats = {
+    totalRequests = 0,
+    totalExecutionTime = 0,
+    averageExecutionTime = 0
+}
+
+local function updatePerformanceStats(executionTime: number)
+    if not ENABLE_PERFORMANCE_TRACKING then return end
+    
+    performanceStats.totalRequests += 1
+    performanceStats.totalExecutionTime += executionTime
+    performanceStats.averageExecutionTime = performanceStats.totalExecutionTime / performanceStats.totalRequests
+    
+    -- Log performance every 100 requests
+    if performanceStats.totalRequests % 100 == 0 then
+        print(`Ability Validator Performance: ${performanceStats.totalRequests} requests, avg: ${math.floor(performanceStats.averageExecutionTime * 1000)}ms`)
+    end
+end
+
+-- Optimization: Pre-allocated EntityRef templates to reduce table creation overhead
+local function createPlayerEntity(player: Player): EntityRef
+    return {
+        entityType = "Player",
+        player = player,
+        npcId = nil,
+        name = player.Name,
+        userId = player.UserId
+    }
+end
+
+local function createNpcEntity(model: Model): EntityRef
+    local playerId = model:FindFirstChild("PlayerId")
+    local npcId = (playerId and playerId:IsA("IntValue") and playerId.Value) or -1
+    return {
+        entityType = "NPC",
+        player = nil,
+        npcId = model.Name,
+        name = model.Name,
+        userId = npcId
+    }
+end
+
+-- Optimized target position resolution
+local function getEntityPosition(entity: EntityRef): Vector3?
+    if entity.entityType == "Player" and entity.player and entity.player.Character then
+        local humanoidRootPart = entity.player.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
+        return humanoidRootPart and humanoidRootPart.Position
+    elseif entity.entityType == "NPC" then
+        -- Optimized NPC position lookup - direct workspace search
+        for _, model in workspace:GetChildren() do
+            if model:IsA("Model") and model.Name == entity.name then
+                local humanoidRootPart = model:FindFirstChild("HumanoidRootPart") :: BasePart?
+                if humanoidRootPart then
+                    return humanoidRootPart.Position
+                end
+            end
+        end
+    end
+    return nil
+end
+
+-- Utility functions for entity handling
+local function _getEntityFromPlayerId(playerId: number): EntityRef?
+    local player = Players:GetPlayerByUserId(playerId)
+    if player then
+        return {
+            entityType = "Player",
+            player = player,
+            npcId = nil,
+            name = player.Name,
+            userId = player.UserId
+        }
+    end
+    
+    -- TODO: Add NPC lookup by ID when NPC system is implemented
+    -- For now, we can check if it's an NPC by looking in some registry
+    -- This would be expanded when we have a proper NPC management system
+    
+    return nil
+end
+
+local function _getEntityUserId(entity: EntityRef): number?
+    if entity.entityType == "Player" and entity.player then
+        return entity.player.UserId
+    elseif entity.entityType == "NPC" then
+        return entity.userId
+    end
+    return nil
+end
+
+local function _getPlayerFromEntity(entity: EntityRef): Player?
+    if entity.entityType == "Player" then
+        return entity.player
+    end
+    return nil
+end
 
 -- Pre-create validation results to reduce table allocations
 local function createValidationResult(predictionId: string, success: boolean, reason: string?, correctedState: StateSnapshot?, authorizedEffects: any?): ValidationResult
@@ -61,22 +166,23 @@ function ServerAbilityValidator:SendValidationResult(player: Player, result: Val
     self.validationRemote:FireClient(player, result)
 end
 
--- Cache and validate ability modules
-function ServerAbilityValidator:GetAbilityModule(abilityId: string): ClientAbilityModule?
+-- Cache and validate ability modules using new loader system
+function ServerAbilityValidator:GetAbilityModule(abilityId: string): ServerAbilityModule?
     local cached = abilityModuleCache[abilityId]
     if cached ~= nil then
         return cached
     end
 
-    local mod = clientAbilities:FindFirstChild(abilityId)
-    if not mod or not mod:IsA("ModuleScript") then
+    -- Use the new ServerAbilities loader system
+    local abilityModule = ServerAbilities.GetAbility(abilityId)
+    if not abilityModule then
         abilityModuleCache[abilityId] = nil
         return nil
     end
 
-    local ok, moduleOrErr = Utils.safeRequire(mod)
-    if ok and type(moduleOrErr) == "table" and type(moduleOrErr.onRequest) == "function" then
-        local validModule = moduleOrErr :: ClientAbilityModule
+    -- Validate that it has the required server methods
+    if type(abilityModule) == "table" then
+        local validModule = abilityModule :: ServerAbilityModule
         abilityModuleCache[abilityId] = validModule
         return validModule
     end
@@ -85,9 +191,18 @@ function ServerAbilityValidator:GetAbilityModule(abilityId: string): ClientAbili
     return nil
 end
 
--- Get player's target based on targetKey attribute
-function ServerAbilityValidator:GetPlayerTarget(player: Player): Model?
-    local targetKey = player:GetAttribute("targetKey")
+-- Get player's target based on targetKey attribute (updated to work with EntityRef)
+function ServerAbilityValidator:GetEntityTarget(entity: EntityRef): EntityRef?
+    local targetKey: string? = nil
+    
+    if entity.entityType == "Player" and entity.player then
+        targetKey = entity.player:GetAttribute("targetKey") :: string?
+    else
+        -- For NPCs, we might need a different targeting system
+        -- For now, return nil as NPCs don't have targeting implemented
+        return nil
+    end
+    
     if not targetKey or type(targetKey) ~= "string" then
         return nil
     end
@@ -96,10 +211,43 @@ function ServerAbilityValidator:GetPlayerTarget(player: Player): Model?
     if #taggedObjects > 0 then
         local targetObject = taggedObjects[1]
         if targetObject:IsA("Model") then
-            return targetObject
+            -- Try to determine if this is a player or NPC
+            local player = Players:GetPlayerFromCharacter(targetObject)
+            if player then
+                -- This is a player character (optimized)
+                return createPlayerEntity(player)
+            else
+                -- This is likely an NPC (optimized)
+                return createNpcEntity(targetObject)
+            end
         end
     end
 
+    return nil
+end
+
+-- Legacy method for backward compatibility
+function ServerAbilityValidator:GetPlayerTarget(player: Player): Model?
+    local entity: EntityRef = {
+        entityType = "Player",
+        player = player,
+        npcId = nil,
+        name = player.Name,
+        userId = player.UserId
+    }
+    
+    local targetEntity = self:GetEntityTarget(entity)
+    if targetEntity and targetEntity.entityType == "Player" and targetEntity.player then
+        return targetEntity.player.Character
+    elseif targetEntity and targetEntity.entityType == "NPC" then
+        -- Find NPC model in workspace
+        for _, model in workspace:GetChildren() do
+            if model:IsA("Model") and model.Name == targetEntity.name then
+                return model
+            end
+        end
+    end
+    
     return nil
 end
 
@@ -174,6 +322,8 @@ function ServerAbilityValidator:_processAbilityFailure(player: Player, predictio
 end
 
 function ServerAbilityValidator:HandlePredictionRequest(player: Player, requestData: any)
+    local startTime = tick() -- Performance tracking
+    
     -- Early validation with single allocation
     if type(requestData) ~= "table" then
         return self:SendValidationResult(player, createValidationResult("", false, "Invalid request"))
@@ -208,7 +358,7 @@ function ServerAbilityValidator:HandlePredictionRequest(player: Player, requestD
         ))
     end
 
-    -- Get cached ability module
+    -- Get cached ability module using new system
     local abilityModule = self:GetAbilityModule(abilityId)
     if not abilityModule then
         return self:SendValidationResult(player, createValidationResult(
@@ -216,27 +366,25 @@ function ServerAbilityValidator:HandlePredictionRequest(player: Player, requestD
         ))
     end
 
-    -- Check if ability requires target
-    local requiresTarget = false
-    if type(abilityModule.getRequiresTarget) == "function" then
-        local ok, result = pcall(abilityModule.getRequiresTarget)
-        if ok and type(result) == "boolean" then
-            requiresTarget = result
-        end
-    end
+    local sharedModule = abilityModule.GetSharedModule()
+    local configs = sharedModule.GetConfig()
+    -- Check if ability requires target (updated method name)
+    local requiresTarget: boolean = configs.REQUIRES_TARGET
 
-    -- Get entity target (if any)
-    local entityTarget = self:GetPlayerTarget(player)
+    -- Create EntityRef for the player (optimized)
+    local playerEntity = createPlayerEntity(player)
+
+    -- Get entity target (if any) using updated method
+    local entityTarget = self:GetEntityTarget(playerEntity)
     
-    -- Determine target position from input data
-    local targetPosition = nil
+    -- Optimized target position resolution
+    local targetPosition: Vector3? = nil
     if inputData.target and type(inputData.target) == "userdata" then
-        -- Client sent target position (Vector3)
+        -- Client sent target position (Vector3) - highest priority
         targetPosition = inputData.target
-    elseif entityTarget and entityTarget:FindFirstChild("HumanoidRootPart") then
-        -- Fallback to entity target position
-        local humanoidRootPart = entityTarget:FindFirstChild("HumanoidRootPart") :: BasePart
-        targetPosition = humanoidRootPart.Position
+    elseif entityTarget then
+        -- Use entity target position (optimized helper function)
+        targetPosition = getEntityPosition(entityTarget)
     elseif inputData.mouseHit and type(inputData.mouseHit) == "userdata" then
         -- Fallback to mouse hit position
         targetPosition = inputData.mouseHit
@@ -249,24 +397,19 @@ function ServerAbilityValidator:HandlePredictionRequest(player: Player, requestD
         ))
     end
 
-    -- Validate range if ability has getAbilityRange function
-    if type(abilityModule.getAbilityRange) == "function" then
-        local ok, range = pcall(abilityModule.getAbilityRange)
-        if ok and type(range) == "number" and range > 0 then
-            local playerCharacter = player.Character
-            if playerCharacter and playerCharacter:FindFirstChild("HumanoidRootPart") then
-                local humanoidRootPart = playerCharacter:FindFirstChild("HumanoidRootPart") :: BasePart
-                local playerPosition = humanoidRootPart.Position
+    local range = configs.ATTACK_RANGE or 0
+    local playerCharacter = player.Character
+    if playerCharacter and playerCharacter:FindFirstChild("HumanoidRootPart") then
+        local humanoidRootPart = playerCharacter:FindFirstChild("HumanoidRootPart") :: BasePart
+        local playerPosition = humanoidRootPart.Position
 
-                -- Check range if we have a target position
-                if targetPosition then
-                    local distance = (playerPosition - targetPosition).Magnitude
-                    if distance > range then
-                        return self:SendValidationResult(player, createValidationResult(
-                            predictionId, false, "Target out of range", serverState
-                        ))
-                    end
-                end
+        -- Check range if we have a target position
+        if targetPosition then
+            local distance = (playerPosition - targetPosition).Magnitude
+            if distance > range then
+                return self:SendValidationResult(player, createValidationResult(
+                    predictionId, false, "Target out of range", serverState
+                ))
             end
         end
     end
@@ -288,8 +431,9 @@ function ServerAbilityValidator:HandlePredictionRequest(player: Player, requestD
 
     -- Execute ability with error handling
     local success, result = pcall(function()
-        if abilityModule.onRequest then
-            return abilityModule.onRequest(context)
+        print(abilityModule)
+        if abilityModule.OnRequest then
+            return abilityModule.OnRequest(context)
         else
             return { success = false, reason = "No onRequest method" }
         end
@@ -304,11 +448,15 @@ function ServerAbilityValidator:HandlePredictionRequest(player: Player, requestD
 
     -- Process ability result based on success/failure
     if abilityResult.success then
+        -- Fire replication to other clients using the new system
         _NetworkServer:FireAllClientsExcept("ReplicateAbilityRequest", player, context)
         self:_processAbilitySuccess(player, predictionId, abilityResult, serverState)
     else
         self:_processAbilityFailure(player, predictionId, abilityResult, serverState)
     end
+    
+    -- Performance tracking
+    updatePerformanceStats(tick() - startTime)
 end
 
 local globalValidator = ServerAbilityValidator.new()

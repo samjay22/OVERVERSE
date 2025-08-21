@@ -4,7 +4,7 @@
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-local EventBus = require(game.ServerStorage.Modules.Utilities.EventBus)
+local EventBus = require(game.ServerStorage.Modules.Events.EventBus)
 
 -- Core network types
 export type NetworkEventData = {

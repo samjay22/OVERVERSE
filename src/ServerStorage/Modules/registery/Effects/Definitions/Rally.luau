@@ -2,7 +2,7 @@
 -- Rally effect - increases damage output
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Enums = require(ReplicatedStorage.Modules.Types.Enums)
+local Enums = require(game.ReplicatedStorage.Modules.Types.Enums)
 local EffectTypes = require(game.ServerStorage.Modules.Types.EffectTypes)
 local EffectBase = require(game.ServerStorage.Modules.BaseClasses.EffectBase)
 

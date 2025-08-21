@@ -27,10 +27,31 @@
 ]]
 
 local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
 
-local CameraShaker = require(script.Parent.CameraShaker)
+local isClient = RunService:IsClient()
 
 local CameraShakeManager = {}
+
+-- Server-safe: if required from server, expose no-op API and return
+if not isClient then
+    function CameraShakeManager.ShakePreset(_: string, _epicenter: Vector3?, _maxDistance: number?, _intensityMultiplier: number?) return nil end
+    function CameraShakeManager.ShakeOnce(_: number, _: number, _fadeInTime: number?, _fadeOutTime: number?, _epicenter: Vector3?, _maxDistance: number?) return nil end
+    function CameraShakeManager.StartShake(_: number, _: number, _fadeInTime: number?, _epicenter: Vector3?, _maxDistance: number?) return nil end
+    function CameraShakeManager.StopSustained(_fadeOutTime: number?) end
+    CameraShakeManager.Bump = function(_epicenter: Vector3?, _maxDistance: number?, _intensityMultiplier: number?) return nil end
+    CameraShakeManager.Explosion = function(_epicenter: Vector3?, _maxDistance: number?, _intensityMultiplier: number?) return nil end
+    CameraShakeManager.Earthquake = function(_epicenter: Vector3?, _maxDistance: number?, _intensityMultiplier: number?) return nil end
+    CameraShakeManager.Vibration = function(_epicenter: Vector3?, _maxDistance: number?, _intensityMultiplier: number?) return nil end
+    CameraShakeManager.BadTrip = function(_epicenter: Vector3?, _maxDistance: number?, _intensityMultiplier: number?) return nil end
+    CameraShakeManager.HandheldCamera = function(_epicenter: Vector3?, _maxDistance: number?, _intensityMultiplier: number?) return nil end
+    CameraShakeManager.RoughDriving = function(_epicenter: Vector3?, _maxDistance: number?, _intensityMultiplier: number?) return nil end
+    CameraShakeManager.CameraShaker = nil
+    return CameraShakeManager
+end
+
+-- Client-only: require implementation
+local CameraShaker = require(script.Parent.CameraShaker)
 
 -- Configuration
 local DEFAULT_MAX_DISTANCE = 50 -- Maximum distance for shake effects
@@ -49,7 +70,7 @@ local function initializeCameraShaker()
     
     cameraShaker = CameraShaker.new(Enum.RenderPriority.Camera.Value, function(shakeCFrame)
         -- Get the player's character for reference frame
-        local character = player.Character
+        local character = player and player.Character
         local rootPart = character and character:FindFirstChild("HumanoidRootPart") :: Part?
         local humanoid = character and character:FindFirstChildOfClass("Humanoid")
         
@@ -72,7 +93,7 @@ end
 local function calculateDistanceFalloff(epicenter: Vector3?, maxDistance: number?): number
     if not epicenter then return 1.0 end
     
-    local character = player.Character
+    local character = player and player.Character
     local rootPart = character and character:FindFirstChild("HumanoidRootPart") :: Part?
     if not rootPart then return 1.0 end
     
@@ -216,15 +237,12 @@ CameraShakeManager.RoughDriving = function(epicenter: Vector3?, maxDistance: num
 end
 
 -- Direct access to the original CameraShaker and its presets for advanced usage
-CameraShakeManager.CameraShaker = CameraShaker
+(CameraShakeManager :: any).CameraShaker = CameraShaker
 
--- Initialize when the module is required
-task.spawn(initializeCameraShaker)
-
--- Cleanup on player leaving
-player.AncestryChanged:Connect(function()
-    if not player.Parent then
-        CameraShakeManager.Cleanup()
+-- Initialize when the module is required (client-only guard)
+task.spawn(function()
+    if Players.LocalPlayer then
+        initializeCameraShaker()
     end
 end)
 

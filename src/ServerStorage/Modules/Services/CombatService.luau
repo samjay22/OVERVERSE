@@ -2,11 +2,11 @@
 -- CombatService: centralized combat logic
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Constants = require(ReplicatedStorage.Modules.Utility.Constants)
+local Constants = require(game.ReplicatedStorage.Modules.Utility.Constants)
 
 local CharacterTypes = require(game.ServerStorage.Modules.Types.CharacterTypes)
 local CombatTypes = require(game.ServerStorage.Modules.Types.CombatTypes)
-local CombatEventBus = require(game.ServerStorage.Modules.Utilities.CombatEventBus)
+local CombatEventBus = require(game.ServerStorage.Modules.Events.CombatEventBus)
 
 local CombatService = {}
 CombatService.__index = CombatService

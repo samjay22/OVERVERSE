@@ -1,7 +1,7 @@
 --!strict
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local ClientAbilityTypes = require(ReplicatedStorage.Modules.Types.ClientAbilityTypes)
+local ClientAbilityTypes = require(game.ReplicatedStorage.Modules.Types.ClientAbilityTypes)
 
 export type AbilityId = string
 export type StateSnapshot = ClientAbilityTypes.StateSnapshot

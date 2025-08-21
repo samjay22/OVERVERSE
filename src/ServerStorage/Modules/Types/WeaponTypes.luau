@@ -2,7 +2,7 @@
 -- Strongly-typed weapon system definitions
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Enums = require(ReplicatedStorage.Modules.Types.Enums)
+local Enums = require(game.ReplicatedStorage.Modules.Types.Enums)
 
 -- Core weapon types
 export type WeaponId = Enums.WeaponId

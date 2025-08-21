@@ -4,7 +4,7 @@
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-local Types = require(ReplicatedStorage.Modules.Types.ClientAbilityTypes)
+local Types = require(game.ReplicatedStorage.Modules.Types.ClientAbilityTypes)
 
 type AbilityId = string -- Using string instead of the specific union to allow flexibility
 type StateSnapshot = Types.StateSnapshot

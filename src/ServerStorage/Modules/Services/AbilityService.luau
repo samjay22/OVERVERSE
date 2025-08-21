@@ -1,357 +1,337 @@
 --!strict
--- AbilityService: manages per-character ability loadouts, cooldowns, and activation
+-- AbilityService: Optimized manager for per-character ability loadouts, cooldowns, and activation
 
-local _ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ServerStorage = game:GetService("ServerStorage")
+
 local CombatComponent = require(game.ServerStorage.Modules.Components.CombatComponent)
 local AbilityTypes = require(game.ServerStorage.Modules.Types.AbilityTypes)
-local ClientAbilities = require(_ReplicatedStorage.Modules.ClientAbilities)
+local ClientAbilities = require(game.ReplicatedStorage.Modules.ClientAbilities)
+local Character = require(game.ServerStorage.Modules.Entities.Character)
 
+-- Type exports
 export type IAbilityService = AbilityTypes.IAbilityService
 export type Loadout = AbilityTypes.Loadout
 export type PerCharacterAbilityState = AbilityTypes.PerCharacterAbilityState
--- Server no longer depends on ability registry; client modules drive behavior
 export type AbilityId = AbilityTypes.AbilityId
+
+-- Constants
+local OFFSET = 100000
+local SLOT_TO_NUM_CODES = {
+    [1] = { Enum.KeyCode.Q.Value, Enum.KeyCode.One.Value },
+    [2] = { Enum.KeyCode.E.Value, Enum.KeyCode.Two.Value },
+    [3] = { Enum.KeyCode.R.Value, Enum.KeyCode.Three.Value },
+    [4] = { Enum.KeyCode.F.Value, Enum.KeyCode.Four.Value },
+}
+
+local DEFAULT_BINDINGS = {
+    M1 = { numeric = { OFFSET + Enum.UserInputType.MouseButton1.Value } },
+    M2 = { numeric = { OFFSET + Enum.UserInputType.MouseButton2.Value } },
+}
+
+-- Passive ability modifiers
+local PASSIVE_MODIFIERS = {
+    Keen = {
+        CriticalChance = 0.15,
+        CriticalDamage = 0.25,
+    },
+    -- Add more passive abilities here
+}
 
 local AbilityService = {}
 AbilityService.__index = AbilityService
 
+-- **Constructor**
 function AbilityService.New()
-    local self = setmetatable({}, AbilityService)
-    self._perCharacter = {} :: {[number]: PerCharacterAbilityState}
-    return self
+    return setmetatable({
+        _perCharacter = {} :: {[number]: PerCharacterAbilityState}
+    }, AbilityService)
 end
 
--- Normalize external/registry loadout shapes into typed Loadout
-local function _normalizeLoadout(incoming: Loadout | any): Loadout
+-- **Private Helper Functions**
+local function normalizeLoadout(incoming: any): Loadout
     if not incoming then
-        return {
-            primaryAttacks = {},
-            actives = {},
-            passive = nil,
-        }
+        return { primaryAttacks = {}, actives = {}, passive = nil }
     end
-    local pa = (incoming :: any).primaryAttacks
-    local single = (incoming :: any).primaryAttack
-    local normalizedPrimary = if pa ~= nil then pa elseif single ~= nil then { single } else {}
-    local actives = (incoming :: any).actives or {}
-    local passive = (incoming :: any).passive
+    
+    local primaryAttacks = incoming.primaryAttacks or (incoming.primaryAttack and {incoming.primaryAttack}) or {}
+    
     return {
-        primaryAttacks = normalizedPrimary,
-        actives = actives,
-        passive = passive,
+        primaryAttacks = primaryAttacks,
+        actives = incoming.actives or {},
+        passive = incoming.passive,
     }
 end
 
--- Registry removed: no server-side ability definitions
-
-function AbilityService:_getState(playerId: number): PerCharacterAbilityState?
-    return self._perCharacter[playerId]
+local function createBindingEntry(input: EnumItem?): { numeric: {number} }
+    if not input then
+        return { numeric = {} }
+    end
+    
+    local value = if input.EnumType == Enum.KeyCode 
+        then input.Value 
+        else OFFSET + input.Value
+        
+    return { numeric = { value } }
 end
 
+local function getCharacterSafe(player: Player): AbilityTypes.CharacterRef?
+    return Character:GetCharacterData(player)
+end
+
+-- **Core Methods**
 function AbilityService:Initialize(character: AbilityTypes.CharacterRef, loadout: Loadout?)
-    local playerId: number = character.PlayerId
-    local initial: Loadout = _normalizeLoadout(loadout)
+    local playerId = character.PlayerId
+    local normalizedLoadout = normalizeLoadout(loadout)
+    
     self._perCharacter[playerId] = {
         cooldowns = {},
-        loadout = initial,
+        loadout = normalizedLoadout,
     }
-
-    -- Passive server hooks removed; client is responsible for passive visuals/effects
+    
+    -- Apply initial passive if present
+    if normalizedLoadout.passive then
+        self:_applyPassiveModifiers(character, normalizedLoadout.passive, true)
+    end
 end
 
 function AbilityService:Update(character: AbilityTypes.CharacterRef, dt: number)
-    local state: PerCharacterAbilityState? = self:_getState(character.PlayerId)
-    if not state then return end
-    -- No server passive ticking
+    -- Currently no server-side updates needed
+    return
 end
 
-local function _now(): number
-    return time()
-end
-
-local function _canPayStamina(character: AbilityTypes.CharacterRef, cost: number?): boolean
-    local c: number = cost or 0
-    if c <= 0 then return true end
-    local current: number = character.StateManager:Get("Stamina")
-    return current >= c
-end
-
-local function _spendStamina(character: AbilityTypes.CharacterRef, cost: number?)
-    local c: number = cost or 0
-    if c <= 0 then return end
-    local current: number = character.StateManager:Get("Stamina")
-    character.StateManager:Set("Stamina", math.max(0, current - c))
-end
-
+-- **Cooldown Management**
 function AbilityService:_isOffCooldown(playerId: number, abilityId: string, cd: number?): boolean
-    local state: PerCharacterAbilityState? = self._perCharacter[playerId]
+    local state = self._perCharacter[playerId]
     if not state then return false end
-    local untilTime: number? = state.cooldowns[abilityId :: any]
-    return not untilTime or _now() >= untilTime
+    
+    local cooldownEnd = state.cooldowns[abilityId]
+    return not cooldownEnd or time() >= cooldownEnd
 end
 
 function AbilityService:_startCooldown(playerId: number, abilityId: string, cd: number?)
-    local state: PerCharacterAbilityState? = self._perCharacter[playerId]
-    if not state then return end
-    local duration: number = cd or 0
-    if duration <= 0 then return end
-    state.cooldowns[abilityId :: any] = _now() + duration
+    if not cd or cd <= 0 then return end
+    
+    local state = self._perCharacter[playerId]
+    if state then
+        state.cooldowns[abilityId] = time() + cd
+    end
 end
 
-function AbilityService:Activate(player: Player, abilityId: string, ctxExtra: {[string]: any}?): boolean
-    -- Server no longer looks up or executes abilities; client predicts and server validates elsewhere
-    -- Accept the request so input pipeline proceeds; authoritative checks are in ServerAbilityValidator
-    return true
-end
-
-function AbilityService:PrimaryAttack(player: Player, attackType: string?): boolean
-    print(player)
-    local Character = require(game.ServerStorage.Modules.Entities.Character)
-    local character: AbilityTypes.CharacterRef? = Character:GetCharacterData(player)
+-- **Input Handling**
+function AbilityService:HandleInput(player: Player, action: string, isDown: boolean, meta: {[string]: any}?): boolean
+    local character = getCharacterSafe(player)
     if not character then return false end
-        -- Back-compat: route to M1
-        return self:M1(player, attackType)
+    
+    -- Update last input timestamp
+    character.StateManager:Set("LastInputTS", (meta and meta.tsServer) or os.time())
+    
+    -- Route to appropriate handler
+    if action == "M1" then
+        return self:_handleM1(player, character, isDown, meta)
+    elseif action == "M2" then
+        return self:_handleM2(player, character, isDown)
+    elseif action == "Slot" then
+        return true -- Client predictor handles slot abilities
+    end
+    
+    return false
 end
 
--- New: Explicit M1 / M2 controls
-function AbilityService:M1(player: Player, attackType: string?): boolean
-    local Character = require(game.ServerStorage.Modules.Entities.Character)
-    local character: AbilityTypes.CharacterRef? = Character:GetCharacterData(player)
-    if not character then return false end
-    return CombatComponent.PerformAttack(character, attackType)
+function AbilityService:_handleM1(player: Player, character: AbilityTypes.CharacterRef, isDown: boolean, meta: {[string]: any}?): boolean
+    if not isDown then return true end
+    
+    local keyBinds = character.StateManager:Get("KeyBindings") or {}
+    local state = self._perCharacter[player.UserId]
+    
+    -- Check for ability override
+    local abilityId = keyBinds.M1Ability or (state and state.loadout.primaryAttacks[1])
+    
+    if abilityId then
+        return true -- Let client predictor handle
+    end
+    
+    -- Default melee attack
+    return CombatComponent.PerformAttack(character, meta and meta.attackType)
 end
 
-function AbilityService:M2(player: Player, isDown: boolean): boolean
-    local Character = require(game.ServerStorage.Modules.Entities.Character)
-    local character: AbilityTypes.CharacterRef? = Character:GetCharacterData(player)
-    if not character then return false end
+function AbilityService:_handleM2(player: Player, character: AbilityTypes.CharacterRef, isDown: boolean): boolean
+    local keyBinds = character.StateManager:Get("KeyBindings") or {}
+    local state = self._perCharacter[player.UserId]
+    
+    -- Check for ability override
+    local abilityId = keyBinds.M2Ability or (state and state.loadout.primaryAttacks[2])
+    
+    if abilityId then
+        return true -- Let client predictor handle
+    end
+    
+    -- Default block
     return CombatComponent.PerformBlock(character, isDown)
 end
 
--- Unified input handler to avoid many one-off functions.
--- action: "M1" | "M2" | "Slot"
--- meta: { slot: number?, tsServer: number? }
-function AbilityService:HandleInput(player: Player, action: string, isDown: boolean, meta: {[string]: any}?): boolean
-    local Character = require(game.ServerStorage.Modules.Entities.Character)
-    local character: AbilityTypes.CharacterRef? = Character:GetCharacterData(player)
-    if not character then return false end
-
-    local keyBinds = character.StateManager:Get("KeyBindings") or {}
-    local ts = (meta and (meta :: any).tsServer) or os.time()
-    character.StateManager:Set("LastInputTS", ts)
-    local pcState: PerCharacterAbilityState? = self:_getState(player.UserId)
-
-    if action == "M2" then
-            -- Prefer explicit override (KeyBindings.M2Ability), else use loadout.primaryAttacks[2]
-            -- If an ability is bound, let the client predictor handle it; otherwise default to block
-            local override: string? = (keyBinds and (keyBinds :: any).M2Ability) :: any
-            local pa2: string? = (pcState and pcState.loadout and (pcState.loadout.primaryAttacks or {})[2]) :: any
-            local chosen: string? = override or pa2
-            if chosen then
-                return true
-            end
-            return self:M2(player, isDown)
-    elseif action == "M1" then
-            -- Prefer explicit override (KeyBindings.M1Ability), else use loadout.primaryAttacks[1]
-            -- If an ability is bound, let the client predictor handle it; otherwise default melee
-            local override: string? = (keyBinds and (keyBinds :: any).M1Ability) :: any
-            local pa1: string? = (pcState and pcState.loadout and (pcState.loadout.primaryAttacks or {})[1]) :: any
-            local chosen: string? = override or pa1
-            if chosen then
-                return true
-            end
-            if isDown then
-                return self:M1(player, (meta and (meta :: any).attackType) or nil)
-            end
-            return true
-    elseif action == "Slot" then
-        -- Client predictor handles slot abilities; server acknowledges input
-        return true
-    else
-        return false
-    end
+-- **Legacy Compatibility**
+function AbilityService:PrimaryAttack(player: Player, attackType: string?): boolean
+    return self:M1(player, attackType)
 end
 
--- Convenience: Remap M1/M2 abilities or slot abilities in one place.
--- binding: "M1" | "M2" | "Slot1" | "Slot2" | "Slot3" | "Slot4"
-function AbilityService:RemapBinding(player: Player, binding: string, abilityId: string?)
-    local Character = require(game.ServerStorage.Modules.Entities.Character)
-    local character: AbilityTypes.CharacterRef? = Character:GetCharacterData(player)
-    if not character then return false end
+function AbilityService:M1(player: Player, attackType: string?): boolean
+    local character = getCharacterSafe(player)
+    return character and CombatComponent.PerformAttack(character, attackType) or false
+end
 
+function AbilityService:M2(player: Player, isDown: boolean): boolean
+    local character = getCharacterSafe(player)
+    return character and CombatComponent.PerformBlock(character, isDown) or false
+end
+
+function AbilityService:Activate(player: Player, abilityId: string, ctxExtra: {[string]: any}?): boolean
+    -- Server accepts request; validation happens elsewhere
+    return true
+end
+
+-- **Binding Management**
+function AbilityService:RemapBinding(player: Player, binding: string, abilityId: string?): boolean
+    local character = getCharacterSafe(player)
+    if not character then return false end
+    
+    -- Handle M1/M2 bindings
     if binding == "M1" or binding == "M2" then
-        local binds = character.StateManager:Get("KeyBindings") or {}
-        local copy = table.clone(binds)
-        if binding == "M1" then
-            copy.M1Ability = abilityId
-        else
-            copy.M2Ability = abilityId
-        end
-        character.StateManager:Set("KeyBindings", copy)
+        local binds = table.clone(character.StateManager:Get("KeyBindings") or {})
+        binds[binding .. "Ability"] = abilityId
+        character.StateManager:Set("KeyBindings", binds)
         return true
     end
-
-    -- Slot remap updates the loadout
+    
+    -- Handle slot bindings
     local slot = tonumber(string.sub(binding, 5))
     if slot and slot >= 1 and slot <= 4 then
-        local state: PerCharacterAbilityState? = self:_getState(player.UserId)
+        local state = self._perCharacter[player.UserId]
         if not state then return false end
+        
         local newLoadout = table.clone(state.loadout)
-        newLoadout.actives = table.clone(newLoadout.actives)
-        if abilityId == nil then
-            newLoadout.actives[slot] = nil :: any
-        else
-            newLoadout.actives[slot] = abilityId :: any
-        end
+        newLoadout.actives = table.clone(newLoadout.actives or {})
+        newLoadout.actives[slot] = abilityId
         state.loadout = newLoadout
         return true
     end
+    
     return false
 end
--- New: get current loadout for a character
+
+-- **Loadout Management**
 function AbilityService:GetLoadout(playerId: number): Loadout?
-    local s = self._perCharacter[playerId]
-    return s and s.loadout or nil
+    local state = self._perCharacter[playerId]
+    return state and state.loadout
 end
 
--- New: apply and set a loadout for a character (handles passive equip/unequip)
 function AbilityService:SetLoadout(character: AbilityTypes.CharacterRef, newLoadout: Loadout)
     local playerId = character.PlayerId
     local state = self._perCharacter[playerId]
+    
     if not state then
         self:Initialize(character, newLoadout)
         return
     end
-
+    
     local oldLoadout = state.loadout
-    state.loadout = _normalizeLoadout(newLoadout)
+    state.loadout = normalizeLoadout(newLoadout)
+    
+    -- Handle passive changes
+    self:_updatePassives(character, oldLoadout.passive, state.loadout.passive)
+    
+    -- Update key bindings
+    self:_updateKeyBindings(character, state.loadout)
+end
 
-    -- Handle passive ability changes
-    self:_handlePassiveChanges(character, oldLoadout, state.loadout)
-
-    -- Also rebuild default KeyBindings from the new loadout using ClientAbilities inputs
-    local OFFSET = 100000
-    local SLOT_TO_NUM_CODES: {[number]: {number}} = {
-        [1] = { Enum.KeyCode.Q.Value, Enum.KeyCode.One.Value },
-        [2] = { Enum.KeyCode.E.Value, Enum.KeyCode.Two.Value },
-        [3] = { Enum.KeyCode.R.Value, Enum.KeyCode.Three.Value },
-        [4] = { Enum.KeyCode.F.Value, Enum.KeyCode.Four.Value },
-    }
-    -- Legacy string key names removed; numeric-only mapping is used throughout
-    local function toBindingEntry(input: EnumItem): { numeric: {number} }
-        if input.EnumType == Enum.KeyCode then
-            return { numeric = { (input :: any).Value } }
-        elseif input.EnumType == Enum.UserInputType then
-            return { numeric = { OFFSET + (input :: any).Value } }
-        else
-            return { numeric = {} }
-        end
-    end
-
-    local binds = {
-        M1 = { numeric = { OFFSET + Enum.UserInputType.MouseButton1.Value } },
-        M2 = { numeric = { OFFSET + Enum.UserInputType.MouseButton2.Value } },
-        Slots = {} :: { [number]: { numeric: {number} } },
-    }
-    local activeIds = state.loadout.actives or {}
+function AbilityService:_updateKeyBindings(character: AbilityTypes.CharacterRef, loadout: Loadout)
+    local binds = table.clone(DEFAULT_BINDINGS)
+    binds.Slots = {}
+    
     for slot = 1, 4 do
-        local abilityId: string? = activeIds[slot]
-        local entry
-        if abilityId ~= nil then
-            local clientMod = ClientAbilities.Get(abilityId :: any)
+        local abilityId = loadout.actives[slot]
+        local entry = { numeric = table.clone(SLOT_TO_NUM_CODES[slot]) }
+        
+        if abilityId then
+            local clientMod = ClientAbilities.Get(abilityId)
             if clientMod and typeof(clientMod.getAbilityInputRequired) == "function" then
-                local ok, input = pcall(function()
-                    return (clientMod :: any).getAbilityInputRequired()
-                end)
-                if ok and input ~= nil then
-                    entry = toBindingEntry(input :: EnumItem)
-                    -- Preserve paired number/QERF defaults if matching this slot
-                    if input.EnumType == Enum.KeyCode then
-                        local val = (input :: any).Value
-                        local slotCodes = SLOT_TO_NUM_CODES[slot]
-                        for _, code in ipairs(slotCodes) do
-                            if code == val then
-                                -- union with slot defaults
-                                local mergedNums = {} :: {number}
-                                local presentNum = {} :: {[number]: boolean}
-                                for _, n in ipairs(entry.numeric) do
-                                    presentNum[n] = true
-                                    table.insert(mergedNums, n)
-                                end
-                                for _, n in ipairs(slotCodes) do
-                                    if not presentNum[n] then
-                                        table.insert(mergedNums, n)
-                                    end
-                                end
-                                entry = { numeric = mergedNums }
-                                break
+                local ok, input = pcall(clientMod.getAbilityInputRequired)
+                if ok and input then
+                    local customEntry = createBindingEntry(input)
+                    if #customEntry.numeric > 0 then
+                        -- Merge with default slot codes if applicable
+                        local mergedNums = table.clone(customEntry.numeric)
+                        local presentNums = {}
+                        
+                        for _, num in ipairs(mergedNums) do
+                            presentNums[num] = true
+                        end
+                        
+                        -- Add default slot codes if not already present
+                        for _, code in ipairs(SLOT_TO_NUM_CODES[slot]) do
+                            if not presentNums[code] then
+                                table.insert(mergedNums, code)
                             end
                         end
+                        
+                        entry.numeric = mergedNums
                     end
                 end
             end
         end
-    if not entry or (#entry.numeric == 0) then
-            entry = {
-        numeric = table.clone(SLOT_TO_NUM_CODES[slot]),
-            }
-        end
-        (binds.Slots :: any)[slot] = entry
+        
+        binds.Slots[slot] = entry
     end
+    
     character.StateManager:Set("KeyBindings", binds)
 end
 
--- Handle passive ability changes when loadout is updated
-function AbilityService:_handlePassiveChanges(character: AbilityTypes.CharacterRef, oldLoadout: Loadout, newLoadout: Loadout)
-    local oldPassive = oldLoadout.passive
-    local newPassive = newLoadout.passive
-
-    -- Remove old passive if it changed
-    if oldPassive and oldPassive ~= newPassive then
-        self:_unequipPassive(character, oldPassive)
+-- **Passive Management**
+function AbilityService:_updatePassives(character: AbilityTypes.CharacterRef, oldPassive: AbilityId?, newPassive: AbilityId?)
+    if oldPassive == newPassive then return end
+    
+    if oldPassive then
+        self:_applyPassiveModifiers(character, oldPassive, false)
     end
-
-    -- Equip new passive if different
-    if newPassive and newPassive ~= oldPassive then
-        self:_equipPassive(character, newPassive)
+    
+    if newPassive then
+        self:_applyPassiveModifiers(character, newPassive, true)
     end
 end
 
--- Equip a passive ability
-function AbilityService:_equipPassive(character: AbilityTypes.CharacterRef, passiveId: AbilityId)
+function AbilityService:_applyPassiveModifiers(character: AbilityTypes.CharacterRef, passiveId: AbilityId, isEquipping: boolean)
     local stateManager = character.StateManager
     if not stateManager then return end
-
-    -- Get current passive modifiers
+    
+    local modifiers = PASSIVE_MODIFIERS[passiveId]
+    warn(modifiers)
+    if not modifiers then return end
+    
     local currentModifiers = stateManager:Get("PassiveModifiers") or {}
     
-    -- For now, add basic stat modifiers based on passive ID
-    -- This should be replaced with proper passive ability module loading
-    if passiveId == "Keen" then
-        currentModifiers.CriticalChance = (currentModifiers.CriticalChance or 0) + 0.15
-        currentModifiers.CriticalDamage = (currentModifiers.CriticalDamage or 0) + 0.25
+    for stat, value in pairs(modifiers) do
+        local current = currentModifiers[stat] or 0
+        currentModifiers[stat] = isEquipping 
+            and (current + value) 
+            or math.max(0, current - value)
     end
-    -- Add more passive abilities here as needed
-
+    
     stateManager:Set("PassiveModifiers", currentModifiers)
 end
 
--- Unequip a passive ability  
-function AbilityService:_unequipPassive(character: AbilityTypes.CharacterRef, passiveId: AbilityId)
-    local stateManager = character.StateManager
-    if not stateManager then return end
-
-    -- Get current passive modifiers
-    local currentModifiers = stateManager:Get("PassiveModifiers") or {}
-    
-    -- Remove stat modifiers based on passive ID
-    if passiveId == "Keen" then
-        currentModifiers.CriticalChance = math.max(0, (currentModifiers.CriticalChance or 0) - 0.15)
-        currentModifiers.CriticalDamage = math.max(0, (currentModifiers.CriticalDamage or 0) - 0.25)
-    end
-    -- Add more passive abilities here as needed
-
-    stateManager:Set("PassiveModifiers", currentModifiers)
+-- Legacy compatibility methods
+AbilityService._getState = function(self, playerId: number): PerCharacterAbilityState?
+    return self._perCharacter[playerId]
 end
+
+AbilityService._equipPassive = function(self, character: AbilityTypes.CharacterRef, passiveId: AbilityId)
+    self:_applyPassiveModifiers(character, passiveId, true)
+end
+
+AbilityService._unequipPassive = function(self, character: AbilityTypes.CharacterRef, passiveId: AbilityId)
+    self:_applyPassiveModifiers(character, passiveId, false)
+end
+
+AbilityService._handlePassiveChanges = AbilityService._updatePassives
 
 return AbilityService

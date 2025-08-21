@@ -2,7 +2,7 @@
 -- CharacterAssetLoader - Handles loading and caching of character assets
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-local AssetHandlerModule = require(ReplicatedStorage.Modules.AssetHandlers)
+local AssetHandlerModule = require(game.ReplicatedStorage.Modules.AssetHandlers)
 local CharacterAssets = AssetHandlerModule.OnModuleLoaded("Characters")
 local AnimationAssets = AssetHandlerModule.OnModuleLoaded("Animations")
 

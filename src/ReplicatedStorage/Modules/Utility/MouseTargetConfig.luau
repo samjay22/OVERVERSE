@@ -26,9 +26,9 @@ local MouseTargetConfig: MouseTargetConfig = {
 	},
 	
 	debug = {
-		enabled = true, -- Set to true to enable debug features
+		enabled = false, -- Disabled for better performance in production
 		raycastVisualization = false,
-		logging = true,
+		logging = false,
 	},
 }
 

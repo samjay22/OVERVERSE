@@ -9,8 +9,8 @@ local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 local Lighting = game:GetService("Lighting")
 
-local Types = require(ReplicatedStorage.Modules.Types.ClientAbilityTypes)
-local CameraShakeManager = require(ReplicatedStorage.Modules.Utility.CameraShakeManager)
+local Types = require(game.ReplicatedStorage.Modules.Types.ClientAbilityTypes)
+local CameraShakeManager = require(game.ReplicatedStorage.Modules.Utility.CameraShakeManager)
 
 local Player: Player = Players.LocalPlayer
 
@@ -107,20 +107,20 @@ local executeAttack: (number?, Vector3?) -> ()
 local playCharacterAnimation: (string, Vector3?) -> AnimationTrack?
 
 -- Ability Interface Functions
-function Ability.onRequest(ctx: SharedAbilityContext): AbilityResult
+function Ability.OnRequest(ctx: SharedAbilityContext): AbilityResult
     return {
         success = true,
         cooldowns = { [tostring(ctx.abilityId)] = ctx.timestamp + COOLDOWN_TIME },
     }
 end
 
-function Ability.onReplicate(ctx: SharedAbilityContext, serverData: any?)
+function Ability.OnReplicate(ctx: SharedAbilityContext, serverData: any?)
     -- Handle replication from other clients (latency compensated)
     local targetPosition = ctx.inputData.target
     task.spawn(executeAttack, ctx and ctx.timestamp, targetPosition)
 end
 
-function Ability.onCast(ctx: SharedAbilityContext, serverData: any?)
+function Ability.OnCast(ctx: SharedAbilityContext, serverData: any?)
     -- Local client: play animation, projectile will spawn precisely on "Fire" event/keyframe
     -- Store the target position from the context for use during animation
     local targetPosition = ctx.inputData.target

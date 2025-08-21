@@ -279,10 +279,10 @@ function MouseTargetController:start(): ()
     self._running = true
     self._debugManager:log("Starting mouse targeting system")
     
-    -- Bind to render step for smooth updates
+    -- Use Heartbeat for all updates - simpler and more reliable
     self._connection = RunService.Heartbeat:Connect(function()
         self:_updateTarget()
-        self:_manageHitboxes() -- Manage hitboxes every heartbeat
+        self:_manageHitboxes()
     end)
 end
 

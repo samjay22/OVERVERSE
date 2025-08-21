@@ -1,7 +1,7 @@
 --!strict
 local EffectService = require(game.ServerStorage.Modules.Services.EffectService)
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Constants = require(ReplicatedStorage.Modules.Utility.Constants)
+local Constants = require(game.ReplicatedStorage.Modules.Utility.Constants)
 
 local _service = EffectService.New()
 

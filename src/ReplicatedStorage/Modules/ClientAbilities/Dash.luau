@@ -5,7 +5,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
 local Players = game:GetService("Players")
 
-local Types = require(ReplicatedStorage.Modules.Types.ClientAbilityTypes)
+local Types = require(game.ReplicatedStorage.Modules.Types.ClientAbilityTypes)
 
 local Player = Players.LocalPlayer
 

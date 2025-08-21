@@ -1,5 +1,4 @@
 
-export type AbilityId = "Dash" | "Keen" | "Heal" | "Block" | "Parry" | "Charge" | "Slam" | "Thrust"
 export type GameTimestamp = number
 
 -- Class identifier type used for filtering abilities by player class attribute
@@ -7,6 +6,40 @@ export type ClassId = string | number
 
 -- Ability categorization for clearer separation of logic
 export type AbilityCategory = "Primary" | "Active" | "Passive"
+
+export type AbilityPackage = {
+    Config : ModuleScript,
+    Assets : Folder,
+    Server : ModuleScript,
+    Client : ModuleScript,
+    Shared : ModuleScript
+}
+
+export type Shared = {
+    IsValid : (ctx: SharedAbilityContext) -> boolean,
+    GetConfig : () -> AbilityConfig,
+    GetAssets : () -> Folder,
+}
+
+export type AbilityConfig = {
+    ABILITY_CATEGORY : AbilityCategory,
+    REQUIRES_TARGET : boolean,
+    COOLDOWN_TIME : number,
+    ATTACK_RANGE : number,
+    [string] : any,
+}
+-- Belongs to ClientAbilityPackage.Client module
+export type ClientAbility = {
+    OnReplicate : (ctx: SharedAbilityContext, serverData: any?) -> (),
+    OnCast : (ctx: SharedAbilityContext) -> (),
+    OnCancel : (ctx: SharedAbilityContext, reason: string?) -> (),
+    GetSharedModule : () -> Shared
+}
+
+export type ServerAbility = {
+    OnRequest : (ctx: SharedAbilityContext) -> AbilityResult,
+    GetSharedModule : () -> Shared
+}
 
 export type StateSnapshot = {
     timestamp: GameTimestamp,
@@ -21,7 +54,7 @@ export type StateSnapshot = {
 
 export type SharedAbilityContext = {
     playerId: number,
-    abilityId: AbilityId,
+    abilityId: number,
     timestamp: GameTimestamp,
     inputData: {
         position: Vector3?,
@@ -38,45 +71,6 @@ export type AbilityResult = {
     success: boolean,
     reason: string?,
     cooldowns: {[string]: number}?,
-}
-
--- Each client ability module should return a table implementing this interface.
--- onRequest: invoked immediately on input to predict and drive local feedback.
--- onCast: invoked when the server confirms the cast; do authoritative VFX/SFX here.
--- OnCancel: invoked when the server rejects/cancels; revert visuals or state.
-export type ClientAbilityModule = {
-  -- Back-compat adapter for older callers
-	onCast: (ctx: SharedAbilityContext) -> AbilityResult,
-	onConfirm: ((ctx: SharedAbilityContext, serverData: any?) -> ())?,
-	onReject: ((ctx: SharedAbilityContext, reason: string?) -> ())?,
-	onReplicate: ((ctx: SharedAbilityContext, reason: string?) -> ())?,
-
-	-- New static interface surface (delegates to per-ability module when present)
-	onRequest: ((ctx: SharedAbilityContext) -> AbilityResult)?,
-	OnCancel: ((ctx: SharedAbilityContext, reason: string?) -> ())?,
-
-    getAbilityInputRequired : () -> Enum.KeyCode | Enum.UserInputType,
-    -- Optional flag to indicate which class can use this ability. Return nil for "any class".
-    getAbilityClassId: () -> ClassId?,
-    getAbilityRange: () -> number?,
-    getRequiresTarget: () -> boolean?,
-    -- New: categorization for proper handling
-    getAbilityCategory: () -> AbilityCategory,
-}
-
--- Passive ability module interface - simpler as they don't have activation
-export type PassiveAbilityModule = {
-    -- Called when the passive is equipped
-    onEquip: (playerId: number, characterState: StateSnapshot) -> {[string]: number}?, -- Returns stat modifiers
-    -- Called when the passive is unequipped  
-    onUnequip: (playerId: number, characterState: StateSnapshot) -> (),
-    -- Optional: called periodically while equipped
-    onTick: ((playerId: number, characterState: StateSnapshot, deltaTime: number) -> ())?,
-    
-    -- Metadata functions
-    getAbilityClassId: () -> ClassId?,
-    getAbilityCategory: () -> AbilityCategory, -- Should return "Passive"
-    getStatModifiers: () -> {[string]: number}?, -- Base stat modifications
 }
 
 return {}

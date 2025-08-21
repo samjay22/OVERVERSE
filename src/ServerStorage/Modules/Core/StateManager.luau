@@ -2,7 +2,7 @@
 -- Strongly-typed State Manager with event-driven architecture
 
 local CoreTypes = require(game.ServerStorage.Modules.Types.CoreTypes)
-local EventBus = require(game.ServerStorage.Modules.Utilities.EventBus)
+local EventBus = require(game.ServerStorage.Modules.Events.EventBus)
 
 export type IStateManager = CoreTypes.IStateManager
 export type StateValue = CoreTypes.StateValue

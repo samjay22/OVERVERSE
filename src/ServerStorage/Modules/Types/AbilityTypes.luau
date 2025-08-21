@@ -1,8 +1,7 @@
 --!strict
 -- Strongly-typed ability system definitions
 
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Enums = require(ReplicatedStorage.Modules.Types.Enums)
+local Enums = require(game.ReplicatedStorage.Modules.Types.Enums)
 
 -- Core ability types
 -- Use broad string ID to align with registry keys and ease authoring
@@ -10,10 +9,22 @@ export type AbilityId = string | (Enum.UserInputType)
 export type AbilityType = Enums.AbilityType
 export type AbilityTarget = Enums.AbilityTarget
 
--- Character reference (strongly typed)
+-- Entity types for character management (shared definition)
+export type EntityType = "Player" | "NPC"
+
+-- Entity reference that can be either a Player or NPC
+export type EntityRef = {
+    entityType: EntityType,
+    player: Player?, -- Only set if entityType is "Player"
+    npcId: string?, -- Only set if entityType is "NPC"
+    name: string,
+    userId: number, -- Positive for players, negative for NPCs
+}
+
+-- Character reference (updated to use new system)
 export type CharacterRef = {
 	PlayerId: number,
-	Player: Player,
+	Entity: EntityRef, -- Updated to use EntityRef instead of Player
 	Character: Model?,
 	Humanoid: Humanoid?,
 	StateManager: any, -- Will be properly typed once StateManager is refactored
@@ -21,15 +32,18 @@ export type CharacterRef = {
 	Events: {[string]: BindableEvent},
 }
 
--- Ability context for activation
+-- Ability context for activation (updated to support both players and NPCs)
 export type AbilityContext = {
-	player: Player,
+	entity: EntityRef, -- Changed from player: Player to entity: EntityRef
 	character: CharacterRef,
 	abilityId: AbilityId,
 	targetPosition: Vector3?,
-	targetPlayer: Player?,
+	targetEntity: EntityRef?, -- Changed from targetPlayer to targetEntity
 	direction: Vector3?,
 	extra: {[string]: any}?,
+	-- Legacy compatibility fields
+	player: Player?, -- Only populated for player entities
+	targetPlayer: Player?, -- Only populated if target is a player
 }
 
 -- Ability activation result
@@ -48,7 +62,6 @@ export type BaseAbilityDef = {
 	targetType: AbilityTarget,
 	cooldown: number?,
 	staminaCost: number?,
-	manaCost: number?,
 	level: number?,
 	tags: {string}?,
 }
@@ -96,7 +109,6 @@ export type ToggleAbilityDef = BaseAbilityDef & {
 	onActivate: (context: AbilityContext) -> AbilityResult,
 	onDeactivate: (context: AbilityContext) -> AbilityResult,
 	staminaPerSecond: number?,
-	manaPerSecond: number?,
 	maxDuration: number?,
 }
 
@@ -110,7 +122,6 @@ export type AbilityDef = {
 	targetType: AbilityTarget,
 	cooldown: number?,
 	staminaCost: number?,
-	manaCost: number?,
 	level: number?,
 	tags: {string}?,
 	icon: string?,
@@ -133,7 +144,6 @@ export type AbilityDef = {
 	onActivate: ((context: AbilityContext) -> AbilityResult)?,
 	onDeactivate: ((context: AbilityContext) -> AbilityResult)?,
 	staminaPerSecond: number?,
-	manaPerSecond: number?,
 	maxDuration: number?,
 }
 
@@ -172,8 +182,8 @@ export type PerCharacterAbilityState = {
 export type IAbilityService = {
 	Initialize: (self: IAbilityService, character: CharacterRef, loadout: Loadout?) -> (),
 	Update: (self: IAbilityService, character: CharacterRef, dt: number) -> (),
-	Activate: (self: IAbilityService, player: Player, abilityId: AbilityId, ctxExtra: {[string]: any}?) -> boolean,
-	PrimaryAttack: (self: IAbilityService, player: Player, attackType: string?) -> boolean,
+	Activate: (self: IAbilityService, entity: EntityRef | Player, abilityId: AbilityId, ctxExtra: {[string]: any}?) -> boolean,
+	PrimaryAttack: (self: IAbilityService, entity: EntityRef | Player, attackType: string?) -> boolean,
 }
 
 return 0

@@ -5,9 +5,9 @@
 local ServiceManager = require(game.ServerStorage.Modules.Core.ServiceManager)
 local CharacterService = require(game.ServerStorage.Modules.Services.CharacterService)
 local AbilityService = require(game.ServerStorage.Modules.Services.AbilityService)
-local InputHandler = require(game.ServerStorage.Modules.Utilities.InputHandler)
+local InputHandler = require(game.ServerStorage.Modules.Handlers.InputHandler)
 -- Ability registry removed
-local ErrorHandler = require(game.ServerStorage.Modules.Utilities.ErrorHandler)
+local ErrorHandler = require(game.ServerStorage.Modules.Handlers.ErrorHandler)
 
 export type ServiceFactory = {
 	CreateServices: () -> ServiceManager.ServiceManager,

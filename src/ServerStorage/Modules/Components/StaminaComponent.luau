@@ -2,7 +2,7 @@
 -- Stamina Component - Manages character stamina and exhaustion
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Constants = require(ReplicatedStorage.Modules.Utility.Constants)
+local Constants = require(game.ReplicatedStorage.Modules.Utility.Constants)
 
 local StaminaComponent = {}
 

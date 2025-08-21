@@ -3,7 +3,7 @@
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-local Enums = require(ReplicatedStorage.Modules.Types.Enums)
+local Enums = require(game.ReplicatedStorage.Modules.Types.Enums)
 local CharacterTypes = require(game.ServerStorage.Modules.Types.CharacterTypes)
 local WeaponTypes = require(game.ServerStorage.Modules.Types.WeaponTypes)
 

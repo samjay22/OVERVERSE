@@ -3,14 +3,16 @@
 	Mouse Controller Client
 	Simplified and clean mouse targeting system using the modular MouseTargetController
 	
-	@author: GitHub Copilot
+	@author: Sam
 	@version: 2.0.0
 ]]
+
+local Players = game:GetService("Players")
+
 --// Modules \\--
 local MouseTargetController = require(game.ReplicatedStorage.Modules.Utility.MouseTargetController)
 local MouseTargetConfig = require(game.ReplicatedStorage.Modules.Utility.MouseTargetConfig)
-
-local TargetUpdateEvent : RemoteFunction = game.ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("UpdatePlayerTarget") :: RemoteFunction
+local TargetSystem = require(game.ReplicatedStorage.Modules.CoreClient.Targeting).new()
 
 local Player : Player = game.Players.LocalPlayer
 --// Create and configure the mouse target controller \\--
@@ -28,13 +30,8 @@ mouseController:onTargetChanged(function(newTarget: Model?, oldTarget: Model?)
 		task.wait()
 	end
 
-	TargetUpdateEvent:InvokeServer(newTarget)
+	TargetSystem:SetTarget(Players.LocalPlayer, newTarget)
 end)
 
 --// Start the targeting system \\--
 mouseController:start()
-
---// Optional: Expose controller globally for other scripts \\--
--- You can access the current target via: mouseController:getCurrentTarget()
--- Or register callbacks via: mouseController:onTargetChanged(callback)
-_G.MouseTargetController = mouseController

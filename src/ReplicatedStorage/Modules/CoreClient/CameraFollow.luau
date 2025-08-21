@@ -16,12 +16,11 @@ local VECTOR3_UP = Vector3.new(0, 1, 0)
 
 local CAMERA_SETTINGS = table.freeze({
     HeightOffset = 1.5,
-    TweenDuration = 0.4,
-    TweenInfo = TweenInfo.new(0.4)
+    TweenDuration = 0.5,
+    TweenInfo = TweenInfo.new(0.5, Enum.EasingStyle.Elastic, Enum.EasingDirection.In)
 })
 
 local player = Players.LocalPlayer
-local camera = Workspace.CurrentCamera
 
 -------------------------
 --// Module \\--

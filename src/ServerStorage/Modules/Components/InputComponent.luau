@@ -3,8 +3,8 @@
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-local Enums = require(ReplicatedStorage.Modules.Types.Enums)
-local ClientAbilities = require(ReplicatedStorage.Modules.ClientAbilities)
+local Enums = require(game.ReplicatedStorage.Modules.Types.Enums)
+local ClientAbilities = require(game.ReplicatedStorage.Modules.ClientAbilities)
 local AbilityTypes = require(game.ServerStorage.Modules.Types.AbilityTypes)
 local AbilityComponent = require(game.ServerStorage.Modules.Components.AbilityComponent)
 local CombatComponent = require(game.ServerStorage.Modules.Components.CombatComponent)

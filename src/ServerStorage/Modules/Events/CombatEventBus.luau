@@ -1,7 +1,7 @@
 --!strict
 -- CombatEventBus: typed event bus for combat events
 
-local EventBus = require(game.ServerStorage.Modules.Utilities.EventBus)
+local EventBus = require(game.ServerStorage.Modules.Events.EventBus)
 local CombatEventTypes = require(game.ServerStorage.Modules.Types.CombatEventTypes)
 
 export type ICombatEventBus = CombatEventTypes.ICombatEventBus

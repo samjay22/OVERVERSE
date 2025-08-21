@@ -1,12 +1,14 @@
 --!strict
 
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-
-local StateManager = require(ReplicatedStorage.Modules.Utility.StateManager)
+local StateManager = require(game.ReplicatedStorage.Modules.Utility.StateManager)
 local AbilityTypes = require(game.ServerStorage.Modules.Types.AbilityTypes)
 
 -- Character Class identifiers
 export type CharacterClassId = string
+
+-- Import shared types from AbilityTypes to avoid circular dependency
+export type EntityType = AbilityTypes.EntityType
+export type EntityRef = AbilityTypes.EntityRef
 
 -- Hooks that a character class can implement
 export type CharacterClassHooks = {
@@ -46,7 +48,7 @@ export type CharacterSignals = {
 
 export type Character = {
 	PlayerId : number,
-	Player : Player,
+	Entity : EntityRef, -- Replaces Player field to support both players and NPCs
     Character: Model,
 	Humanoid : Humanoid,
     WeaponSheath : BasePart?,
@@ -88,6 +90,9 @@ export type CharacterConfig = {
     AbilityLoadout: AbilityTypes.Loadout?,
     ClassId: CharacterClassId?,
     Custom: {[string]: any}?,
+    -- NPC-specific configuration
+    IsNPC: boolean?, -- Indicates if this is an NPC character
+    NPCName: string?, -- Custom name for NPC (if different from model name)
 }
 
 export type ComponentInterface = {

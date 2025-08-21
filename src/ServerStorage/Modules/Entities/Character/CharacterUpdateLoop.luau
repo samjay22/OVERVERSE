@@ -2,8 +2,8 @@
 -- CharacterUpdateLoop - Ultra-fast character updates with frame budgeting
 local Players = game:GetService("Players")
 
-local UpdateScheduler = require(game.ServerStorage.Modules.Utilities.UpdateScheduler)
-local FrameBudgetManager = require(game.ServerStorage.Modules.Utilities.FrameBudgetManager)
+local UpdateScheduler = require(game.ServerStorage.Modules.Systems.UpdateScheduler)
+local FrameBudgetManager = require(game.ServerStorage.Modules.Systems.FrameBudgetManager)
 local CharacterTypes = require(game.ServerStorage.Modules.Types.CharacterTypes)
 
 type internalCharacter = CharacterTypes.internalCharacter
@@ -12,6 +12,9 @@ export type PerformanceMetrics = {
 	UpdateTime: number,
 	CharacterCount: number,
 	LastCleanup: number,
+	FrameCount: number,
+	AverageFrameTime: number,
+	SkippedFrames: number,
 }
 
 export type ICharacterUpdateLoop = {
@@ -38,7 +41,10 @@ function CharacterUpdateLoop.new(interval: number?): ICharacterUpdateLoop
 	self._performanceMetrics = {
 		UpdateTime = 0,
 		CharacterCount = 0,
-		LastCleanup = 0
+		LastCleanup = 0,
+		FrameCount = 0,
+		AverageFrameTime = 0,
+		SkippedFrames = 0,
 	} :: PerformanceMetrics
 	
 	-- Ultra-fast batch processing state
@@ -46,6 +52,8 @@ function CharacterUpdateLoop.new(interval: number?): ICharacterUpdateLoop
 	self._updateBatchSize = 16 -- Process characters in batches
 	self._lastUpdateTime = 0
 	self._frameSkipThreshold = 16.67 -- Skip frames if falling behind (60fps = 16.67ms)
+	self._frameTimes = table.create(30) -- Rolling average of frame times
+	self._frameTimeIndex = 1
 	
 	return (self :: any) :: ICharacterUpdateLoop
 end
@@ -72,15 +80,42 @@ function CharacterUpdateLoop:Start()
 		return
 	end
 	
-	-- Set up the update loop
+	-- Set up the update loop with enhanced performance tracking
 	local disconnect = self._scheduler:OnStep(function(dt: number)
 		local startTime = time()
+		
+		-- Update frame counter
+		local metrics: PerformanceMetrics = self._performanceMetrics
+		metrics.FrameCount = metrics.FrameCount + 1
 		
 		-- Execute the update callback
 		self._updateCallback(dt)
 		
-		-- Update performance metrics
-		self._performanceMetrics.UpdateTime = time() - startTime
+		-- Update performance metrics with rolling average
+		local frameTime = time() - startTime
+		metrics.UpdateTime = frameTime
+		
+		-- Update rolling average frame time
+		local frameTimes = self._frameTimes :: {number}
+		local frameIndex = self._frameTimeIndex :: number
+		frameTimes[frameIndex] = frameTime
+		self._frameTimeIndex = (frameIndex % 30) + 1
+		
+		-- Calculate average frame time
+		local total = 0
+		local count = 0
+		for i = 1, #frameTimes do
+			if frameTimes[i] then
+				total += frameTimes[i]
+				count += 1
+			end
+		end
+		metrics.AverageFrameTime = if count > 0 then total / count else 0
+		
+		-- Track frame skips if performance is poor
+		if frameTime > self._frameSkipThreshold then
+			metrics.SkippedFrames = metrics.SkippedFrames + 1
+		end
 	end)
 	
 	self._scheduler:Start()
@@ -92,7 +127,7 @@ function CharacterUpdateLoop:Start()
 			disconnect()
 			if self._scheduler then
 				self._scheduler:Destroy()
-				self._scheduler = nil
+				-- Don't set to nil, just mark as destroyed
 			end
 		end 
 	} :: any)

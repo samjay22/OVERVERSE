@@ -1,122 +1,130 @@
---!strict
--- Client Ability: RemM1 - Ranged attack with spiral projectile (improved timing)
-
 local Players = game:GetService("Players")
 local Debris = game:GetService("Debris")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local CollectionService = game:GetService("CollectionService")
 local RunService = game:GetService("RunService")
+local SoundService = game:GetService("SoundService")
 
-local Types = require(ReplicatedStorage.Modules.Types.ClientAbilityTypes)
 local CameraShakeManager = require(ReplicatedStorage.Modules.Utility.CameraShakeManager)
+local Types: {  } = require(ReplicatedStorage.Modules.Types.ClientAbilityTypes)
+local Config = require(script.Parent.Config)
 
-local Player: Player = Players.LocalPlayer
+local Player = Players.LocalPlayer
 
-export type SharedAbilityContext = Types.SharedAbilityContext
-export type AbilityResult = Types.AbilityResult
+type AbilityAssets = typeof(script.Parent.Assets)
+local effectsFolder : AbilityAssets = script.Parent.Assets
 
--- Ability Configuration
-local ABILITY_CLASS = "Rem"
-local ANIMATION_NAME = "M1"
-local COOLDOWN_TIME = 1.6
-local ATTACK_RANGE = 50
-local REQUIRES_TARGET = true
+local Client = {}
 
--- Animation Constants
-local ANIM_FADE_TIME = 0.05
-local ANIM_PRIORITY = Enum.AnimationPriority.Action
-
--- Projectile Constants
-local PROJECTILE_SPEED = 80 -- Speed in studs per second (consistent regardless of distance)
-local SPIRAL_RADIUS = 4
-local SPIRAL_FREQUENCY = 6
-local PROJECTILE_SIZE = Vector3.new(0.3, 0.3, 0.3) -- Smaller projectile
-local PROJECTILE_COLOR = Color3.new(0.2, 1, 0.3) -- More vibrant green
-
--- Effect Constants
-local EFFECT_CLEANUP_TIME = 1
-local LIGHT_BRIGHTNESS = 3
-local LIGHT_RANGE = 8
-local PARTICLE_RATE = 30
-
-local Ability = {}
-
--- Forward declarations
-local executeAttack: (number?, Vector3?) -> ()
-local playCharacterAnimation: (string, Vector3?) -> AnimationTrack?
-
--- Ability Interface Functions
-function Ability.onRequest(ctx: SharedAbilityContext): AbilityResult
-    print("test")
-    return {
-        success = true,
-        cooldowns = { [tostring(ctx.abilityId)] = ctx.timestamp + COOLDOWN_TIME },
-    }
+-- Audio system
+local function playSoundEffect(soundId: string, volume: number?)
+    local sound = Instance.new("Sound")
+    sound.SoundId = soundId
+    sound.Volume = volume or Config.SOUND_VOLUME
+    sound.Parent = SoundService
+    sound:Play()
+    
+    sound.Ended:Connect(function()
+        sound:Destroy()
+    end)
 end
 
-function Ability.onReplicate(ctx: SharedAbilityContext, serverData: any?)
+function Client.OnReplicate(ctx: Types.SharedAbilityContext, serverData: any?)
     -- Handle replication from other clients (latency compensated)
     local targetPosition = ctx.inputData.target
     task.spawn(executeAttack, ctx and ctx.timestamp, targetPosition)
 end
 
-function Ability.onCast(ctx: SharedAbilityContext, serverData: any?)
+function Client.OnCast(ctx: Types.SharedAbilityContext, serverData: any?)
     -- Local client: play animation, projectile will spawn precisely on "Fire" event/keyframe
     -- Store the target position from the context for use during animation
     local targetPosition = ctx.inputData.target
-    task.spawn(playCharacterAnimation, ANIMATION_NAME, targetPosition)
+    
+    -- Play cast sound effect
+    playSoundEffect(Config.SOUND_CAST_ID, Config.SOUND_VOLUME)
+    
+    task.spawn(playCharacterAnimation,Config.ANIMATION_NAME, targetPosition)
 end
 
-function Ability.OnCancel(ctx: SharedAbilityContext, reason: string?)
+function Client.OnCancel(ctx: Types.SharedAbilityContext, reason: string?)
     -- Implementation if needed
 end
 
--- Helper Functions
-local function doEffect(character: Model?, targetPosition: Vector3?)
-    if not character then
+-- Required interface functions
+function Client.GetSharedModule()
+    return require(script.Parent.Shared)
+end
+
+-- Ability configuration interface functions for backward compatibility
+function Client.getAbilityInputRequired()
+    return Enum.UserInputType.MouseButton1
+end
+
+function Client.getAbilityClassId()
+    return Config.ABILITY_CLASS
+end
+
+function Client.getAbilityCategory()
+    return Config.ABILITY_CATEGORY
+end
+
+function Client.getAbilityRange()
+    return Config.ATTACK_RANGE
+end
+
+function Client.getAbilityCooldown()
+    return Config.COOLDOWN_TIME
+end
+
+function Client.getRequiresTarget()
+    return Config.REQUIRES_TARGET
+end
+
+local function doCastEffect(castEffectRequest : {
+    character: Model,
+    targetPosition: Vector3?,
+    startPos : Vector3,
+    endPos : Vector3})
+    if not castEffectRequest.character then
         warn("Invalid character for effect")
         return
     end
 
-    -- Wait for Effects folder to replicate from server (with timeout)
-    local effectsFolder = character:FindFirstChild("Effects")
+    -- Wait for Effects folder to replicate from server (with timeout)    
     if not effectsFolder then
-        effectsFolder = character:WaitForChild("Effects", 5) -- Wait up to 5 seconds
-    end
-    
-    if not effectsFolder then
-        warn("No Effects folder in character after waiting")
+        error("No Effects folder in ability!")
         return
     end
 
-    local effect = effectsFolder:FindFirstChild("M1")
+    local effect = effectsFolder.CastHeal
     if not effect then
-        warn("No M1 effect found in Effects folder")
+        error("No CastHeal effect found in Effects folder")
         return
     end
-
     -- Create effect at target position if available, otherwise at character position
-    local effectPosition = targetPosition or (character.PrimaryPart and character.PrimaryPart.Position)
+    local effectPosition = castEffectRequest.targetPosition or (castEffectRequest.character.PrimaryPart and castEffectRequest.character.PrimaryPart.Position)
     if not effectPosition then
         warn("No valid position for effect")
         return
     end
 
-    -- Create a temporary invisible part to attach the effect to
-    local effectPart = Instance.new("Part")
-    effectPart.Name = "EffectAnchor"
-    effectPart.Size = Vector3.new(0.1, 0.1, 0.1)
-    effectPart.Transparency = 1
-    effectPart.CanCollide = false
-    effectPart.Anchored = true
-    effectPart.CFrame = CFrame.new(effectPosition)
-    effectPart.Parent = workspace
-
     local effectClone = effect:Clone()
-    effectClone.Parent = effectPart
-    
+    effectClone.CFrame = CFrame.lookAt(castEffectRequest.startPos, castEffectRequest.endPos)
+    effectClone.Anchored = true
+    effectClone.CanCollide = false
+    effectClone.Parent = game.Workspace
+
+    local emiters = effectClone:GetDescendants() 
+    task.spawn(function()
+        for _, emmiter : ParticleEmitter in emiters do 
+            if emmiter:IsA("ParticleEmitter") then
+                emmiter:Emit(3)
+            end
+        end
+    end)
+
     -- Clean up both the effect and the anchor part
-    Debris:AddItem(effectPart, EFFECT_CLEANUP_TIME)
+    Debris:AddItem(effectClone, Config.EFFECT_CLEANUP_TIME)
 end
 
 -- Precise Fire trigger helper
@@ -176,105 +184,79 @@ playCharacterAnimation = function(animName: string, targetPosition: Vector3?): A
     
     -- Load and play animation
     local track = animator:LoadAnimation(anim)
-    track.Priority = ANIM_PRIORITY
+    track.Priority = Config.ANIM_PRIORITY
     pcall(function() track.Looped = false end)
 
     -- Hook precise trigger with target position
     connectFireTrigger(track, targetPosition)
     
-    track:Play(ANIM_FADE_TIME, 1, 1)
+    track:Play(Config.ANIM_FADE_TIME, 1, 1)
     return track
 end
 
 local function createProjectileVisuals(projectile: BasePart)
-    -- Add glowing effect
+    -- Add healing glow effect (more gentle than damage spells)
     local pointLight = Instance.new("PointLight")
-    pointLight.Color = PROJECTILE_COLOR
-    pointLight.Brightness = LIGHT_BRIGHTNESS
-    pointLight.Range = LIGHT_RANGE
+    pointLight.Color = Config.PROJECTILE_COLOR
+    pointLight.Brightness = Config.LIGHT_BRIGHTNESS
+    pointLight.Range = Config.LIGHT_RANGE
     pointLight.Parent = projectile
     
-    -- Add particle effect
+    -- Add healing particle effect (more sparkly/gentle)
     local attachment = Instance.new("Attachment")
     attachment.Parent = projectile
     
     local particles = Instance.new("ParticleEmitter")
     particles.Parent = attachment
     particles.Color = ColorSequence.new{
-        ColorSequenceKeypoint.new(0, PROJECTILE_COLOR),
-        ColorSequenceKeypoint.new(0.5, Color3.new(1, 1, 1)), -- White in middle
-        ColorSequenceKeypoint.new(1, PROJECTILE_COLOR)
+        ColorSequenceKeypoint.new(0, Config.PROJECTILE_COLOR),
+        ColorSequenceKeypoint.new(0.3, Color3.new(0.8, 1, 0.9)), -- Light cyan healing color
+        ColorSequenceKeypoint.new(0.7, Color3.new(1, 1, 1)), -- White sparkle in middle
+        ColorSequenceKeypoint.new(1, Config.PROJECTILE_COLOR)
     }
     particles.Size = NumberSequence.new{
-        NumberSequenceKeypoint.new(0, 0.3),
-        NumberSequenceKeypoint.new(0.5, 0.6),
-        NumberSequenceKeypoint.new(1, 0)
-    }
-    particles.Lifetime = NumberRange.new(0.2, 0.4)
-    particles.Rate = PARTICLE_RATE
-    particles.SpreadAngle = Vector2.new(30, 30)
-    particles.Speed = NumberRange.new(3, 8)
-    particles.Transparency = NumberSequence.new{
-        NumberSequenceKeypoint.new(0, 0.3),
-        NumberSequenceKeypoint.new(1, 1)
-    }
-    
-    -- Add trail effect
-    local trailAttachment0 = Instance.new("Attachment")
-    trailAttachment0.Name = "TrailAttachment0"
-    trailAttachment0.Position = Vector3.new(0, 0, -0.2)
-    trailAttachment0.Parent = projectile
-    
-    local trailAttachment1 = Instance.new("Attachment")
-    trailAttachment1.Name = "TrailAttachment1"
-    trailAttachment1.Position = Vector3.new(0, 0, 0.2)
-    trailAttachment1.Parent = projectile
-    
-    local trail = Instance.new("Trail")
-    trail.Attachment0 = trailAttachment0
-    trail.Attachment1 = trailAttachment1
-    trail.Color = ColorSequence.new{
-        ColorSequenceKeypoint.new(0, PROJECTILE_COLOR),
-        ColorSequenceKeypoint.new(0.5, Color3.new(1, 1, 1)),
-        ColorSequenceKeypoint.new(1, PROJECTILE_COLOR)
-    }
-    trail.Transparency = NumberSequence.new{
         NumberSequenceKeypoint.new(0, 0.2),
-        NumberSequenceKeypoint.new(0.5, 0.4),
-        NumberSequenceKeypoint.new(1, 1)
-    }
-    trail.Lifetime = 0.5
-    trail.MinLength = 0
-    trail.FaceCamera = true
-    trail.WidthScale = NumberSequence.new{
-        NumberSequenceKeypoint.new(0, 1),
         NumberSequenceKeypoint.new(0.5, 0.8),
         NumberSequenceKeypoint.new(1, 0)
     }
-    trail.Parent = projectile
+    particles.Lifetime = NumberRange.new(0.3, 0.6) -- Longer lifetime for gentler effect
+    particles.Rate = Config.PARTICLE_RATE
+    particles.SpreadAngle = Vector2.new(45, 45) -- Wider spread for healing sparkles
+    particles.Speed = NumberRange.new(2, 6) -- Slower, more gentle movement
+    particles.Transparency = NumberSequence.new{
+        NumberSequenceKeypoint.new(0, 0.2),
+        NumberSequenceKeypoint.new(0.8, 0.5),
+        NumberSequenceKeypoint.new(1, 1)
+    }
+    
+    -- Add secondary healing trail effect
+    local healingTrail = Instance.new("Trail")
+    healingTrail.Attachment0 = attachment
+    
+    local attachment2 = Instance.new("Attachment")
+    attachment2.Parent = projectile
+    attachment2.Position = Vector3.new(0, 0, -1)
+    healingTrail.Attachment1 = attachment2
+    
+    healingTrail.Color = ColorSequence.new{
+        ColorSequenceKeypoint.new(0, Config.PROJECTILE_COLOR),
+        ColorSequenceKeypoint.new(1, Color3.new(0.8, 1, 0.9))
+    }
+    healingTrail.Transparency = NumberSequence.new{
+        NumberSequenceKeypoint.new(0, 0.3),
+        NumberSequenceKeypoint.new(1, 0.9)
+    }
+    healingTrail.Lifetime = 0.5
+    healingTrail.MinLength = 0.1
+    healingTrail.Parent = projectile
 end
 
 local function createSpiralProjectile(startPos: Vector3, endPos: Vector3): BasePart
-    -- Create the projectile ball
-    local projectile = Instance.new("Part")
-    projectile.Name = "SpiralProjectile"
-    projectile.Shape = Enum.PartType.Ball
-    projectile.Material = Enum.Material.ForceField
-    projectile.Size = PROJECTILE_SIZE
-    projectile.Color = PROJECTILE_COLOR
+    local projectile = effectsFolder.HealSpellTrail:Clone()
+    projectile.CFrame = CFrame.lookAt(startPos, endPos)
     projectile.CanCollide = false
     projectile.Anchored = true
-    projectile.CFrame = CFrame.new(startPos)
     projectile.Parent = workspace
-    
-    -- Add transparency for a more ethereal look
-    projectile.Transparency = 0.3
-    
-    -- Add a mesh for smoother appearance
-    local specialMesh = Instance.new("SpecialMesh")
-    specialMesh.MeshType = Enum.MeshType.Sphere
-    specialMesh.Scale = Vector3.new(1.2, 1.2, 1.2)
-    specialMesh.Parent = projectile
     
     createProjectileVisuals(projectile)
     
@@ -286,9 +268,9 @@ local function calculateSpiralPosition(startPos: Vector3, direction: Vector3, pr
     local basePos = startPos + direction * distance * progress
     
     -- Calculate spiral offset with smoother easing
-    local spiralAngle = progress * math.pi * 2 * SPIRAL_FREQUENCY
-    local spiralRadius = SPIRAL_RADIUS * (1 - progress * progress) -- Quadratic easing for smoother convergence
-    
+    local spiralAngle = progress * math.pi * 2 * Config.SPIRAL_FREQUENCY
+    local spiralRadius = Config.SPIRAL_RADIUS * (1 - progress * progress) -- Quadratic easing for smoother convergence
+
     -- Create perpendicular vectors for spiral
     local right = direction:Cross(Vector3.new(0, 1, 0))
     if right.Magnitude < 1e-6 then
@@ -323,7 +305,7 @@ local function animateSpiralProjectile(
 ): RBXScriptConnection
     local direction = (endPos - startPos).Unit
     local distance = (endPos - startPos).Magnitude
-    local duration = distance / PROJECTILE_SPEED
+    local duration = distance / Config.PROJECTILE_SPEED
 
     local startProgress = math.clamp(initialProgress or 0, 0, 1)
     local startTime = time() - (startProgress * duration)
@@ -408,50 +390,81 @@ executeAttack = function(castTimestamp: number?, targetPosition: Vector3?)
     end
 
     -- Get start position
-    local startPos = character.PrimaryPart.Position + Vector3.new(0, 2, 0) -- Slightly above player
-    
+    local startPos = (character["Wand.."].Part.CFrame * CFrame.new(0, 2, 0)).Position -- Slightly above player
+
     -- Create and animate the spiral projectile
     local projectile = createSpiralProjectile(startPos, endPos)
+    doCastEffect({
+        character = character,
+        targetPosition = endPos,
+        startPos = startPos,
+        endPos = endPos
+    })
 
     -- Latency compensation: start mid-flight on replicate
     local initialProgress: number? = nil
     if typeof(castTimestamp) == "number" then
         local distance = (endPos - startPos).Magnitude
-        local duration = distance / PROJECTILE_SPEED
+        local duration = distance / Config.PROJECTILE_SPEED
         initialProgress = math.clamp((time() - castTimestamp) / duration, 0, 1)
     end
 
     animateSpiralProjectile(projectile, startPos, endPos, function()
-        -- Trigger impact effect exactly on arrival with camera shake
-        doEffect(character, endPos)
-        -- Add subtle camera shake for impact feedback
-        CameraShakeManager.Bump(endPos, 30)
+        -- Trigger healing impact effect exactly on arrival with enhanced feedback
+        local impactEffect = effectsFolder.HealHit:Clone()
+        impactEffect.Position = endPos
+        impactEffect.CanCollide = false
+        impactEffect.Anchored = true
+        impactEffect.Parent = workspace
+        
+        -- Enhanced healing particles
+        for _, particle in ipairs(impactEffect:GetDescendants()) do
+            if particle:IsA("ParticleEmitter") then
+                particle:Emit(8) -- More particles for healing impact
+            end
+        end
+        
+        -- Play healing impact sound
+        playSoundEffect(Config.SOUND_IMPACT_ID, Config.SOUND_VOLUME * 0.8)
+        
+        -- Create healing indicator (floating +HP text)
+        local healingIndicator = Instance.new("BillboardGui")
+        healingIndicator.Name = "HealingIndicator"
+        healingIndicator.Size = UDim2.new(0, 100, 0, 50)
+        healingIndicator.StudsOffset = Vector3.new(0, 3, 0)
+        healingIndicator.Parent = workspace
+        
+        local textLabel = Instance.new("TextLabel")
+        textLabel.Size = UDim2.new(1, 0, 1, 0)
+        textLabel.BackgroundTransparency = 1
+        textLabel.Text = `+{Config.HEAL_AMOUNT} HP`
+        textLabel.TextColor3 = Color3.new(0, 1, 0.3)
+        textLabel.TextScaled = true
+        textLabel.Font = Enum.Font.SourceSansBold
+        textLabel.Parent = healingIndicator
+        
+        -- Animate the healing indicator
+        local tween = game:GetService("TweenService"):Create(healingIndicator, 
+            TweenInfo.new(2, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
+            {StudsOffset = Vector3.new(0, 6, 0)}
+        )
+        tween:Play()
+        
+        local fadeTween = game:GetService("TweenService"):Create(textLabel, 
+            TweenInfo.new(2, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
+            {TextTransparency = 1}
+        )
+        fadeTween:Play()
+        
+        -- Cleanup
+        task.delay(2.5, function()
+            healingIndicator:Destroy()
+        end)
+        
+        -- Add gentle camera shake for healing feedback (much lighter than damage)
+        CameraShakeManager.Bump(endPos, 15)
     end, initialProgress)
 end
 
--- Ability Configuration Interface Functions
-function Ability.getAbilityInputRequired()
-    return Enum.UserInputType.MouseButton1
-end
 
-function Ability.getAbilityClassId()
-    return ABILITY_CLASS
-end
-
-function Ability.getAbilityCategory()
-    return "Primary" -- This is a primary attack ability
-end
-
-function Ability.getAbilityRange()
-    return ATTACK_RANGE
-end
-
-function Ability.getAbilityCooldown()
-    return COOLDOWN_TIME
-end
-
-function Ability.getRequiresTarget()
-    return REQUIRES_TARGET
-end
-
-return Ability
+return Client

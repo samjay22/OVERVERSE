@@ -2,7 +2,7 @@
 -- Movement Component - Manages character movement and speeds
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Constants = require(ReplicatedStorage.Modules.Utility.Constants)
+local Constants = require(game.ReplicatedStorage.Modules.Utility.Constants)
 
 local MovementComponent = {}
 

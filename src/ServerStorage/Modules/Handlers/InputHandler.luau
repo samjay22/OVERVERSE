@@ -3,7 +3,7 @@
 -- Provides clean interface for handling different input types
 
 local CharacterService = require(game.ServerStorage.Modules.Services.CharacterService)
-local ErrorHandler = require(game.ServerStorage.Modules.Utilities.ErrorHandler)
+local ErrorHandler = require(game.ServerStorage.Modules.Handlers.ErrorHandler)
 
 export type InputAction = "M1" | "M2" | "Slot" | "Custom"
 

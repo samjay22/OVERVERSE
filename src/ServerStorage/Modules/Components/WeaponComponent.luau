@@ -2,7 +2,7 @@
 -- WeaponComponent: wraps WeaponService and registers default handlers
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Enums = require(ReplicatedStorage.Modules.Types.Enums)
+local Enums = require(game.ReplicatedStorage.Modules.Types.Enums)
 local WeaponService = require(game.ServerStorage.Modules.Services.WeaponService)
 local WeaponRegistryInit = require(game.ServerStorage.Modules.registery.Weapons)
 local EffectComponent = require(game.ServerStorage.Modules.Components.EffectComponent)
