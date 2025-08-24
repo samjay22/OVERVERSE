@@ -13,7 +13,7 @@ local TargetCache = {}
 
 -- Example: Listen for target changes
 targetSystem:OnTargetChanged(function(player: Player, newTarget: Model?, oldTarget: Model?)
-    warn(`Target changed for {player.Name}: {oldTarget} -> {newTarget}`)
+   -- warn(`Target changed for {player.Name}: {oldTarget} -> {newTarget}`)
     local targetKey : string? = player:GetAttribute("targetKey") :: string
     if targetKey and TargetCache[targetKey] then
         local oldModel = TargetCache[targetKey]

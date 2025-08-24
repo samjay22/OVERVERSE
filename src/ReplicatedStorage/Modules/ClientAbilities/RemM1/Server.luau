@@ -173,15 +173,14 @@ function Server.OnRequest(ctx: Types.SharedAbilityContext): Types.AbilityResult
                     userId = player.UserId
                 }
             else
-                -- This might be an NPC - for now, we'll create a basic NPC entity
-                -- In a full implementation, you'd want to look this up in an NPC registry
-                local npcIdNum = math.random(1000, 9999)
+                local playerId = targetPlayer:FindFirstChild("PlayerId")
+                local npcId = (playerId and playerId:IsA("IntValue") and playerId.Value) or -1
                 targetEntity = {
                     entityType = "NPC",
                     player = nil,
-                    npcId = tostring(npcIdNum), -- Convert to string
+                    npcId = targetPlayer.Name,
                     name = targetPlayer.Name,
-                    userId = -npcIdNum -- Negative for NPCs
+                    userId = npcId
                 }
             end
         end

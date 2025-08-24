@@ -75,4 +75,13 @@ export type AbilityResult = {
     cooldowns: {[string]: number}?,
 }
 
-return {}
+-- Export type constants for runtime use
+return {
+    AbilityCategory = {
+        Primary = "Primary",
+        Active = "Active", 
+        Passive = "Passive",
+        Secondary = "Secondary",
+        Ultimate = "Ultimate"
+    }
+}

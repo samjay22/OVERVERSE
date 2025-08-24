@@ -14,7 +14,6 @@
 		"CameraFollow": "./src/ReplicatedStorage/Modules/CoreClient/CameraFollow.luau",
 		"ShiftLock": "./src/ReplicatedStorage/Modules/CoreClient/ShiftLock.luau",
 		"Targeting": "./src/ReplicatedStorage/Modules/CoreClient/Targeting.luau",
-		"OptimizedNetworking": "./src/ReplicatedStorage/Modules/OptimizedNetworking.luau",
 		"Keen": "./src/ReplicatedStorage/Modules/PassiveAbilities/Keen.luau",
 		"AssetTypes": "./src/ReplicatedStorage/Modules/Types/AssetTypes.luau",
 		"ClientAbilityTypes": "./src/ReplicatedStorage/Modules/Types/ClientAbilityTypes.luau",

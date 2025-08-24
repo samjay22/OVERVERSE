@@ -39,23 +39,23 @@ local Config: {
     ABILITY_CLASS = "Rem",
     ANIMATION_NAME = "M1",
     REQUIRES_TARGET = true,
-    HEAL_AMOUNT = 45, -- Increased healing to make it more impactful
+    HEAL_AMOUNT = 30, -- Increased healing to make it more impactful
     HEAL_RANGE_MULTIPLIER = 0.8, -- Allow healing at 80% of max range for flexibility
-    OVERHEAL_PERCENTAGE = 0.15, -- Allow 15% overheal for strategic play
+    OVERHEAL_PERCENTAGE = 0.25, -- Allow 15% overheal for strategic play
 
     -- Animation Constants
     ANIM_FADE_TIME = 0.125,
     ANIM_PRIORITY = Enum.AnimationPriority.Action4,
 
     -- Projectile Constants
-    PROJECTILE_SPEED = 95, -- Slightly faster for responsiveness
-    SPIRAL_RADIUS = 3.5, -- Tighter spiral for precision
+    PROJECTILE_SPEED = 75, -- Slightly faster for responsiveness
+    SPIRAL_RADIUS = 2, -- Tighter spiral for precision
     SPIRAL_FREQUENCY = 8, -- More spiral rotations for visual appeal
     PROJECTILE_SIZE = Vector3.new(0.4, 0.4, 0.4), -- Slightly larger
     PROJECTILE_COLOR = Color3.new(0.15, 1, 0.4), -- More vibrant healing color
 
     -- Effect Constants
-    EFFECT_CLEANUP_TIME = 2.5,
+    EFFECT_CLEANUP_TIME = 1,
     LIGHT_BRIGHTNESS = 4, -- Brighter healing light
     LIGHT_RANGE = 10, -- Larger light range
     PARTICLE_RATE = 40, -- More particles for better visibility
@@ -64,7 +64,7 @@ local Config: {
     -- Primary ability resource system (ammo instead of cooldown)
     ATTACK_RANGE = 120, -- Increased range for better utility
     MAX_AMMO = 6, -- 6 healing shots before reload
-    RELOAD_TIME = 2.5, -- 2.5 second reload time
+    RELOAD_TIME = 5, -- 2.5 second reload time
     COOLDOWN_TIME = 1.6, -- Cooldown between shots
     
     -- Audio Configuration
