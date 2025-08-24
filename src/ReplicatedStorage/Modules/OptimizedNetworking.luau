@@ -8,10 +8,9 @@ local RunService = game:GetService("RunService")
 
 -- Ultra-fast network optimization constants
 local BATCH_SIZE = 20 -- Optimized batch size for better throughput
-local BATCH_INTERVAL = 0.016 -- ~60 FPS batching (16ms) - optimized for frame rate
-local MAX_BATCH_WAIT = 0.05 -- Further reduced max wait (50ms)
-local PRIORITY_BATCH_SIZE = 3 -- Optimized smaller batches for critical abilities
-local COMPRESSION_THRESHOLD = 2 -- More aggressive compression threshold
+local BATCH_INTERVAL = 0.0010 -- ~60 FPS batching (16ms) - optimized for frame rate
+local MAX_BATCH_WAIT = 0.0025 -- Further reduced max wait (50ms)
+local PRIORITY_BATCH_SIZE = 2 -- Optimized smaller batches for critical abilities
 
 -- Performance optimization constants
 local _MAX_REQUEST_POOL_SIZE = 128 -- Pre-allocated request pool
@@ -24,7 +23,7 @@ export type NetworkBatch = {
     requests: {any},
     validations: {any},
 }
-
+    
 export type BatchProcessor = {
     pendingRequests: {any},
     pendingValidations: {any},

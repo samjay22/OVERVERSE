@@ -1,33 +1,44 @@
---!nonstrict
+--!strict
 -- Health Component - Manages character health and death
 
-local _Constants = require(game.ReplicatedStorage.Modules.Utility.Constants)
+local StateHelpers = require(game.ServerStorage.Modules.Types.CharacterStateTypes)
+local CharacterTypes = require(game.ServerStorage.Modules.Types.CharacterTypes)
+
+export type HealthComponent = {
+    Initialize: (characterData: CharacterTypes.internalCharacter, config: any?) -> (),
+    Update: (characterData: CharacterTypes.internalCharacter, dt: number) -> (),
+    Cleanup: (characterData: CharacterTypes.internalCharacter) -> (),
+}
 
 local HealthComponent = {}
 
-function HealthComponent.Initialize(characterData, config)
+function HealthComponent.Initialize(characterData: CharacterTypes.internalCharacter, config: any?)
     local stateManager = characterData.StateManager
     local humanoid = characterData.Humanoid
     
     -- Add re-entrancy protection flag
-    characterData._healthUpdating = false
+    local char = characterData :: any
+    char._healthUpdating = false
     
     -- Set up health state change handler
-    stateManager:OnStateChange("Health", function(newHealth: any, oldHealth: any)
-        if characterData._healthUpdating then return end
+    stateManager:OnStateChange("Health", function(newHealth, oldHealth)
+        if char._healthUpdating then return end
         
-        characterData._healthUpdating = true
-        humanoid.Health = newHealth
-        characterData._healthUpdating = false
+        char._healthUpdating = true
+        local healthValue = StateHelpers.asNumber(newHealth, 100)
+        humanoid.Health = healthValue
+        char._healthUpdating = false
         
         -- Check for death
-        if newHealth <= 0 and not stateManager:Get("IsDead") then
+        local isDead = StateHelpers.asBoolean(stateManager:Get("IsDead"), false)
+        if healthValue <= 0 and not isDead then
             HealthComponent._HandleDeath(characterData)
         end
         
         -- Health change effects could be added here
-        if newHealth < oldHealth then
-            local dmg = oldHealth - newHealth
+        local oldHealthValue = StateHelpers.asNumber(oldHealth, 100)
+        if healthValue < oldHealthValue then
+            local dmg = oldHealthValue - healthValue
             HealthComponent._OnDamage(characterData, dmg)
             if characterData.Signals and characterData.Signals.OnDamage then
                 characterData.Signals.OnDamage:Fire(dmg, false)
@@ -36,21 +47,23 @@ function HealthComponent.Initialize(characterData, config)
         end
     end)
     
-    stateManager:OnStateChange("MaxHealth", function(newMaxHealth: any)
-        if characterData._healthUpdating then return end
+    stateManager:OnStateChange("MaxHealth", function(newMaxHealth, _oldMaxHealth)
+        if char._healthUpdating then return end
         
-        characterData._healthUpdating = true
-        humanoid.MaxHealth = newMaxHealth
+        char._healthUpdating = true
+        local maxHealthValue = StateHelpers.asNumber(newMaxHealth, 100)
+        humanoid.MaxHealth = maxHealthValue
         -- Clamp current health to max
-        local currentHealth = stateManager:Get("Health")
-        if currentHealth > newMaxHealth then
-            stateManager:Set("Health", newMaxHealth)
+        local currentHealth = StateHelpers.asNumber(stateManager:Get("Health"), 100)
+        if currentHealth > maxHealthValue then
+            stateManager:Set("Health", maxHealthValue)
         end
-        characterData._healthUpdating = false
+        char._healthUpdating = false
     end)
     
-    stateManager:OnStateChange("IsDead", function(isDead: any)
-        if isDead then
+    stateManager:OnStateChange("IsDead", function(isDead, _oldIsDead)
+        local isDeadValue = StateHelpers.asBoolean(isDead, false)
+        if isDeadValue then
             humanoid.PlatformStand = true
             -- Could add death animation here
         else
@@ -60,10 +73,11 @@ function HealthComponent.Initialize(characterData, config)
     
     -- Set up humanoid health changed connection with re-entrancy protection
     local connection = humanoid.HealthChanged:Connect(function(newHealth: number)
-        if not stateManager:Get("IsDead") and not characterData._healthUpdating then
-            characterData._healthUpdating = true
+        local isDead = StateHelpers.asBoolean(stateManager:Get("IsDead"), false)
+        if not isDead and not char._healthUpdating then
+            char._healthUpdating = true
             stateManager:Set("Health", newHealth)
-            characterData._healthUpdating = false
+            char._healthUpdating = false
         end
     end)
     table.insert(characterData._connections, connection)
@@ -74,9 +88,10 @@ function HealthComponent.Initialize(characterData, config)
     table.insert(characterData._connections, diedConnection)
 end
 
-function HealthComponent._HandleDeath(characterData)
+function HealthComponent._HandleDeath(characterData: CharacterTypes.internalCharacter)
     local stateManager = characterData.StateManager
-    if stateManager:Get("IsDead") then return end
+    local isDead = StateHelpers.asBoolean(stateManager:Get("IsDead"), false)
+    if isDead then return end
     
     stateManager:Set("IsDead", true)
     stateManager:Set("Health", 0)
@@ -88,38 +103,40 @@ function HealthComponent._HandleDeath(characterData)
     end
 end
 
-function HealthComponent._OnDamage(characterData, damage: number)
+function HealthComponent._OnDamage(characterData: CharacterTypes.internalCharacter, damage: number)
     -- Could add damage effects, sounds, etc.
     local stateManager = characterData.StateManager
     
     -- Example: Stun on heavy damage
-    local maxHealth = stateManager:Get("MaxHealth") or 100
+    local maxHealth = StateHelpers.asNumber(stateManager:Get("MaxHealth"), 100)
     if damage >= maxHealth * 0.3 then -- 30% of max health
         stateManager:Set("IsStunned", true)
         
         -- Remove stun after delay
         task.spawn(function()
             task.wait(1)
-            if not stateManager:Get("IsDead") then
+            local isDead = StateHelpers.asBoolean(stateManager:Get("IsDead"), false)
+            if not isDead then
                 stateManager:Set("IsStunned", false)
             end
         end)
     end
 end
 
-function HealthComponent.Update(characterData, dt: number)
+function HealthComponent.Update(characterData: CharacterTypes.internalCharacter, dt: number)
     -- Health regeneration could be added here
     local stateManager = characterData.StateManager
     
-    if stateManager:Get("IsDead") then return end
+    local isDead = StateHelpers.asBoolean(stateManager:Get("IsDead"), false)
+    if isDead then return end
     
     -- Note: Constants.REGEN_RATES.Health doesn't exist in current constants
     -- This would need to be implemented if health regeneration is desired
     --[[
     local regenRates = Constants.REGEN_RATES
     if regenRates and regenRates.Health then
-        local currentHealth = stateManager:Get("Health") or 0
-        local maxHealth = stateManager:Get("MaxHealth") or 100
+        local currentHealth = StateHelpers.asNumber(stateManager:Get("Health"), 0)
+        local maxHealth = StateHelpers.asNumber(stateManager:Get("MaxHealth"), 100)
         
         if currentHealth < maxHealth and currentHealth > 0 then
             local regenAmount = regenRates.Health.regenRate * dt

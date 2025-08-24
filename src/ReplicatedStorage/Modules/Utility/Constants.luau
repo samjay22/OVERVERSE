@@ -1,5 +1,37 @@
---!nonstrict
-return {
+--!strict
+
+export type StateValidator = (value: any) -> boolean
+export type StateDefinition = {
+    default: any,
+    validator: StateValidator,
+}
+
+export type RegenRate = {
+    regenRate: number,
+    depleteRate: number?,
+}
+
+export type Constants = {
+    DEFAULT_RESPAWN_TIME: number,
+    BINDABLE_EVENT_POOL_SIZE: number,
+    SHIFT_LOCK_OFFSET: Vector3,
+    CHARACTER_STATE_DEFINITIONS: {[string]: StateDefinition},
+    REGEN_RATES: {[string]: RegenRate},
+    ATTACK_COOLDOWN: number,
+    ATTACK_STAMINA_COST: number,
+    BLOCK_EFFICIENCY: number,
+    COMBO_RESET_TIME: number,
+    GUARD_BREAK_RECOVERY_TIME: number,
+    CHARACTER_ASSET_DEFAULT: string,
+    ROBLOX_ANIMATION_SCRIPT: string,
+    DEFAULT_BLOCKED_SPEED: number,
+    DEFAULT_STUNNED_SPEED: number,
+    DEFAULT_WALK_SPEED: number,
+    DEFAULT_RUN_SPEED: number,
+    DEFAULT_JUMP_POWER: number,
+}
+
+local constants: Constants = {
     DEFAULT_RESPAWN_TIME = 5,
     BINDABLE_EVENT_POOL_SIZE = 5000,
     SHIFT_LOCK_OFFSET =  Vector3.new(3, 0.25, 0),
@@ -124,3 +156,5 @@ return {
     DEFAULT_RUN_SPEED = 26, -- Default run speed
     DEFAULT_JUMP_POWER = 50, -- Default jump power
 }
+
+return constants

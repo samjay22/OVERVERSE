@@ -12,6 +12,8 @@ local RunService = game:GetService("RunService")
 local CollectionService = game:GetService("CollectionService")
 
 local ClientAbilities = require(game.ReplicatedStorage.Modules.ClientAbilities)
+local ClientCategoryHandler = require(game.ReplicatedStorage.Modules.Utility.ClientCategoryHandler)
+local ClientCategoryValidator = require(game.ReplicatedStorage.Modules.Utility.ClientCategoryValidator)
 local Enums = require(game.ReplicatedStorage.Modules.Types.Enums)
 local _AbilityConstants = require(game.ReplicatedStorage.Modules.Utility.AbilityConstants)
 
@@ -22,9 +24,11 @@ type AbilityResult = Types.AbilityResult
 type AbilityId = Enums.AbilityId
 
 -- Performance Constants
-local _PERFORMANCE_CHECK_INTERVAL = 5
-local PREDICTION_TIMEOUT = 30
-local HOLD_LOOP_MIN_WAIT = 0.016  -- ~60 FPS for smoother input response
+local _PERFORMANCE_CHECK_INTERVAL = 10  -- Reduced frequency
+local PREDICTION_TIMEOUT = 15  -- Shorter timeout for faster cleanup
+local HOLD_LOOP_MIN_WAIT = 0.033  -- ~30 FPS, reduces CPU load while maintaining responsiveness
+local MAX_PENDING_PREDICTIONS = 5  -- Limit concurrent predictions
+local PREDICTION_POOL_SIZE = 16  -- Object pool size
 
 -- Ability ID mapping for inputs (updated for new system)
 local INPUT_ABILITY_MAP: {[EnumItem]: string} = {
@@ -43,6 +47,7 @@ local KEYBOARD_ABILITY_MAP: {[Enum.KeyCode]: string} = {
 
 -- Ability configuration cache and utilities
 local AbilityConfigCache = {}
+local AbilityHandlerCache = {}  -- Cache handler instances
 
 -- Ability ID utilities for new system
 local AbilityUtils = {}
@@ -72,22 +77,27 @@ function AbilityUtils.getStringId(numericId: number): string?
     return NUMERIC_TO_STRING_MAP[numericId]
 end
 
--- Get ability config from ClientAbilities
+-- Get ability config from ClientAbilities (with caching)
 function AbilityUtils.getAbilityConfig(abilityId: string): any?
-    if AbilityConfigCache[abilityId] then
-        return AbilityConfigCache[abilityId]
+    local cached = AbilityConfigCache[abilityId]
+    if cached ~= nil then
+        return cached ~= false and cached or nil
     end
     
-    local ability = ClientAbilities.GetAbility(abilityId)
-    if ability and ability.GetSharedModule then
-        local sharedModule = ability.GetSharedModule()
-        if sharedModule and sharedModule.GetConfig then
-            local config = sharedModule.GetConfig()
-            AbilityConfigCache[abilityId] = config
-            return config
+    local ability = AbilityHandlerCache[abilityId] or ClientAbilities.GetAbility(abilityId)
+    if ability then
+        AbilityHandlerCache[abilityId] = ability
+        if ability.GetSharedModule then
+            local sharedModule = ability.GetSharedModule()
+            if sharedModule and sharedModule.GetConfig then
+                local config = sharedModule.GetConfig()
+                AbilityConfigCache[abilityId] = config or false
+                return config
+            end
         end
     end
     
+    AbilityConfigCache[abilityId] = false  -- Cache negative result
     return nil
 end
 
@@ -160,7 +170,13 @@ end
 function AbilityUtils.isAbilityAvailable(abilityId: string): boolean
     local ability = ClientAbilities.GetAbility(abilityId)
     local config = AbilityUtils.getAbilityConfig(abilityId)
-    return ability ~= nil and config ~= nil
+    local available = ability ~= nil and config ~= nil
+    
+    if not available then
+        print("[AbilityUtils] Ability", abilityId, "not available - Ability:", ability ~= nil, "Config:", config ~= nil)
+    end
+    
+    return available
 end
 
 -- Validation Module
@@ -397,6 +413,10 @@ function ClientPredictor.new()
     self.pendingPredictions = {} :: {[string]: PredictionData}
     self.pendingByAbility = {} :: {[string]: string}
     self.predictionCounter = 0 :: number
+    
+    -- Prediction pool for memory reuse
+    self.predictionPool = table.create(PREDICTION_POOL_SIZE)
+    self.predictionPoolSize = 0
 
     -- Global lock: only one ability at a time
     self.activePredictionId = nil :: string?
@@ -404,6 +424,10 @@ function ClientPredictor.new()
     -- Hold support (per ability)
     self.holdFlags = {} :: {[string]: boolean}
     self.holdTasks = {} :: {[string]: thread}
+    
+    -- Cache frequently used values
+    self._lastCharacter = nil :: Model?
+    self._lastCharacterCheck = 0
 
     -- Initialize cooldown manager
     self.cooldowns = CooldownManager.new()
@@ -468,6 +492,16 @@ function ClientPredictor:ExecuteAbility(abilityId: string, input: AbilityInput):
         self:_releaseImmediate()
         return false
     end
+    
+    -- Check prediction limit
+    local pendingCount = 0
+    for _ in pairs(self.pendingPredictions) do
+        pendingCount += 1
+        if pendingCount >= MAX_PENDING_PREDICTIONS then
+            self:_releaseImmediate()
+            return false
+        end
+    end
 
     local tNow = Utils.now()
     if self.cooldowns:isOnCooldown(abilityId, tNow) then
@@ -488,15 +522,9 @@ function ClientPredictor:ExecuteAbility(abilityId: string, input: AbilityInput):
     local abilityHandler: Types.ClientAbility = validation.abilityHandler :: any
     local context = validation.context :: SharedAbilityContext
     
-    -- Execute client-side ability
+    -- Execute client-side ability using category-based dispatcher
     task.spawn(function()
-        if abilityHandler.OnCast then
-            Players.LocalPlayer:SetAttribute("UsingAbility", true)
-            pcall(abilityHandler.OnCast, context)
-            task.defer(function()
-                Players.LocalPlayer:SetAttribute("UsingAbility", false)
-            end)
-        end
+        ClientCategoryHandler.ExecuteAbility(abilityHandler, context)
     end)
 
     -- Apply cooldown and create prediction
@@ -505,6 +533,72 @@ function ClientPredictor:ExecuteAbility(abilityId: string, input: AbilityInput):
     
     self:_releaseImmediate()
     return true
+end
+
+-- Handle R key reload for Primary abilities
+function ClientPredictor:HandleReload()
+    local player = self.player
+    if not player.Character then return end
+    
+    -- Find Primary abilities that could be reloaded
+    local primaryAbilities = {}
+    for abilityString, numericId in pairs(ABILITY_ID_MAP) do
+        local config = AbilityUtils.getAbilityConfig(abilityString)
+        if config and config.ABILITY_CATEGORY == "Primary" then
+            table.insert(primaryAbilities, {
+                stringId = abilityString,
+                numericId = numericId,
+                config = config
+            })
+        end
+    end
+    
+    -- For now, just reload the first Primary ability found (RemM1)
+    -- In a more complex system, you might want to reload all or track which was last used
+    if #primaryAbilities > 0 then
+        local abilityToReload = primaryAbilities[1]
+        
+        -- Create reload context
+        local currentTime = Utils.now()
+        local context = {
+            playerId = player.UserId,
+            abilityId = abilityToReload.numericId,
+            timestamp = currentTime,
+            inputData = {
+                position = player.Character:GetPivot().Position,
+                direction = Vector3.new(0, 0, -1), -- Default forward
+                target = nil,
+                mouseHit = nil,
+                extraData = { action = "reload" },
+            },
+            characterState = {
+                timestamp = currentTime,
+                position = player.Character:GetPivot().Position,
+                velocity = Vector3.new(),
+                health = 100, -- Simplified
+                stamina = 100,
+                cooldowns = {},
+                effects = {},
+            },
+        }
+        
+        -- Send reload request to server via remote event
+        -- This will trigger CategoryHandler.HandleReload on the server
+        local reloadRemote = ReplicatedStorage.Remotes:FindFirstChild("AbilityReload") :: RemoteEvent?
+        if reloadRemote then
+            reloadRemote:FireServer({
+                playerId = player.UserId,
+                abilityId = abilityToReload.numericId,
+                context = context
+            })
+            
+            print("Reload requested for:", abilityToReload.stringId)
+        else
+            warn("AbilityReload remote event not found")
+        end
+    else
+        print("No Primary abilities found to reload")
+    end
 end
 
 -- Comprehensive validation method
@@ -548,7 +642,7 @@ function ClientPredictor:_validateAbilityExecution(abilityId: string, input: Abi
         return { success = false, reason = reqReason }
     end
 
-    -- Build context for successful validation
+    -- Build context for category validation
     local activeCooldowns = self.cooldowns:getActiveCooldowns()
     local healthValue = if humanoid then (humanoid :: Humanoid).Health else 100
     local originalState: StateSnapshot = {
@@ -578,6 +672,12 @@ function ClientPredictor:_validateAbilityExecution(abilityId: string, input: Abi
         characterState = originalState,
     }
 
+    -- Category-based validation
+    local categoryValidation = ClientCategoryValidator.ValidateAbility(abilityHandler, context)
+    if not categoryValidation.success then
+        return { success = false, reason = categoryValidation.reason }
+    end
+
     return {
         success = true,
         abilityHandler = abilityHandler,
@@ -595,17 +695,35 @@ function ClientPredictor:_createAndSendPrediction(
     character: Model
 )
     local predictionId = self:GeneratePredictionId()
-    local prediction: PredictionData = {
-        id = predictionId,
-        timestamp = time(),
-        originalState = context.characterState,
-        predictedState = context.characterState,
-        context = context,
-        result = { success = true }, -- Simplified for new system
-        timeoutHandle = task.delay(PREDICTION_TIMEOUT, function()
-            self:TimeoutPrediction(predictionId)
-        end),
-    }
+    
+    -- Try to reuse pooled prediction object
+    local prediction: PredictionData
+    if self.predictionPoolSize > 0 then
+        prediction = self.predictionPool[self.predictionPoolSize]
+        self.predictionPool[self.predictionPoolSize] = nil
+        self.predictionPoolSize -= 1
+        -- Reset reused object
+        prediction.id = predictionId
+        prediction.timestamp = time()
+        prediction.originalState = context.characterState
+        prediction.predictedState = context.characterState
+        prediction.context = context
+        prediction.result = { success = true }
+    else
+        prediction = {
+            id = predictionId,
+            timestamp = time(),
+            originalState = context.characterState,
+            predictedState = context.characterState,
+            context = context,
+            result = { success = true },
+            timeoutHandle = nil,
+        }
+    end
+    
+    prediction.timeoutHandle = task.delay(PREDICTION_TIMEOUT, function()
+        self:TimeoutPrediction(predictionId)
+    end)
 
     -- Update tracking
     self.pendingPredictions[predictionId] = prediction
@@ -710,7 +828,7 @@ function ClientPredictor:HandleServerValidation(validationData: any)
         end
     end
 
-    -- Clean up
+    -- Clean up and return to pool
     self.pendingPredictions[predictionId] = nil
     -- Clear per-ability pending slot
     if prediction and prediction.context then
@@ -722,6 +840,19 @@ function ClientPredictor:HandleServerValidation(validationData: any)
     -- Release global lock if this was the active
     if self.activePredictionId == predictionId then
         self.activePredictionId = nil
+    end
+    
+    -- Return prediction to pool if there's space
+    if self.predictionPoolSize < PREDICTION_POOL_SIZE and prediction then
+        -- Clear references to help GC
+        prediction.context = nil
+        prediction.originalState = nil
+        prediction.predictedState = nil
+        prediction.result = nil
+        prediction.timeoutHandle = nil
+        
+        self.predictionPoolSize += 1
+        self.predictionPool[self.predictionPoolSize] = prediction
     end
 end
 
@@ -877,15 +1008,18 @@ function ClientPredictor:StartHoldLoop(abilityId: string)
     self.holdFlags[abilityId] = true
 
     self.holdTasks[abilityId] = task.spawn(function()
+        local lastInputData = nil
         while self.holdFlags[abilityId] do
             local currentTime = Utils.now()
             
             -- Only execute if not on cooldown and not actively predicting
             if self.activePredictionId == nil and not self.cooldowns:isOnCooldown(abilityId, currentTime) then
-                local character: Model? = self.player.Character
+                local character: Model? = self:_getCachedCharacter()
                 if character then
-                    local inputData = self:_getMouseInputData(character)
+                    -- Cache input data to avoid recalculating if nothing changed
+                    local inputData = lastInputData or self:_getMouseInputData(character)
                     if inputData then
+                        lastInputData = inputData
                         self:ExecuteAbility(abilityId, inputData)
                     end
                 end
@@ -900,6 +1034,16 @@ end
 
 function ClientPredictor:StopHoldLoop(abilityId: string)
     self.holdFlags[abilityId] = false
+end
+
+-- Get cached character to reduce lookups
+function ClientPredictor:_getCachedCharacter(): Model?
+    local now = time()
+    if now - self._lastCharacterCheck > 0.1 then  -- Cache for 100ms
+        self._lastCharacter = self.player.Character
+        self._lastCharacterCheck = now
+    end
+    return self._lastCharacter
 end
 
 -- Enhanced mouse input data with validation
@@ -973,6 +1117,13 @@ function ClientPredictor:SetupInputHandling()
             else input.KeyCode
 
         local abilityId: string? = INPUT_ABILITY_MAP[queryEnum] or KEYBOARD_ABILITY_MAP[input.KeyCode]
+        
+        -- Special handling for R key reload
+        if input.KeyCode == Enum.KeyCode.R then
+            self:HandleReload()
+            return
+        end
+        
         if not abilityId then return end
 
         -- Handle mouse buttons with hold loops
@@ -1078,16 +1229,58 @@ end
 -- Initialize the system
 local predictor = ClientPredictor.new()
 
--- Preload ability configs for better performance (with small delay to ensure abilities are loaded)
-task.defer(function()
-    task.wait(0.1) -- Small delay to let ability loading complete
-    AbilityUtils.preloadConfigs()
-end)
+-- Function to wait for abilities to be loaded
+local function waitForAbilities()
+    print("[AbilityPredictor] Waiting for abilities to load...")
+    local attempts = 0
+    local abilitiesLoaded = false
+    
+    while not abilitiesLoaded and attempts < 30 do
+        attempts += 1
+        
+        -- Check if core abilities are loaded
+        local hasRemM1 = ClientAbilities.GetAbility("RemM1") ~= nil
+        local hasRemM2 = ClientAbilities.GetAbility("RemM2") ~= nil
+        local hasDash = ClientAbilities.GetAbility("Dash") ~= nil
+        local hasRemE = ClientAbilities.GetAbility("RemE") ~= nil
+        
+        print("[AbilityPredictor] Check", attempts, "- RemM1:", hasRemM1, "RemM2:", hasRemM2, "Dash:", hasDash, "RemE:", hasRemE)
+        
+        if hasRemM1 or hasRemM2 or hasDash or hasRemE then
+            abilitiesLoaded = true
+            print("[AbilityPredictor] Abilities loaded successfully!")
+            break
+        end
+        
+        task.wait(0.5)
+    end
+    
+    if not abilitiesLoaded then
+        warn("[AbilityPredictor] Abilities failed to load after 15 seconds")
+    else
+        -- Preload configs after abilities are confirmed loaded
+        print("[AbilityPredictor] Preloading ability configs...")
+        AbilityUtils.preloadConfigs()
+        print("[AbilityPredictor] Configs preloaded")
+    end
+    
+    return abilitiesLoaded
+end
 
--- Setup the predictor using any type to bypass type checking
-local anyPredictor = predictor :: any
-anyPredictor:SetupInputHandling()
-anyPredictor:StartPerformanceMonitoring()
-anyPredictor:PrintControls()
+-- Wait for abilities before setting up input
+task.spawn(function()
+    local loaded = waitForAbilities()
+    
+    if loaded then
+        print("[AbilityPredictor] Setting up input handling...")
+        -- Setup the predictor using any type to bypass type checking
+        local anyPredictor = predictor :: any
+        anyPredictor:SetupInputHandling()
+        anyPredictor:StartPerformanceMonitoring()
+        anyPredictor:PrintControls()
+    else
+        warn("[AbilityPredictor] Not setting up input handling due to load failure")
+    end
+end)
 
 return predictor

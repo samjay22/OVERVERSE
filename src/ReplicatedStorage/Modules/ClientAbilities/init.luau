@@ -11,12 +11,19 @@ local AbilityCache = {}
 local Loader = {}
 
 Loader.GetAbility = function(abilityId: string): any
-    return AbilityCache[abilityId]
+    local cached = AbilityCache[abilityId]
+    print("[ClientAbilities] GetAbility called for:", abilityId, "- Cached:", cached ~= nil)
+    if cached and cached.Execute then
+        print("[ClientAbilities] Ability has Execute method")
+    end
+    return cached
 end
 
-local function _loadClientAbility(abilityId : number, abilityPackage: Types.AbilityPackage)
-    AbilityCache[abilityId] = require(abilityPackage:WaitForChild("Client"))
-    AbilityCache[abilityId].GetSharedModule = function()
+local function _loadClientAbility(abilityId : string, abilityPackage: Types.AbilityPackage)
+    print("[ClientAbilities] Loading ability:", abilityId)
+    
+    local clientModule = require(abilityPackage:WaitForChild("Client"))
+    clientModule.GetSharedModule = function()
         local sharedMod = (require(abilityPackage.Shared) :: Types.Shared)
 
         sharedMod.GetAssets = function()
@@ -29,11 +36,16 @@ local function _loadClientAbility(abilityId : number, abilityPackage: Types.Abil
 
         return sharedMod
     end
+    
+    AbilityCache[abilityId] = clientModule
+    print("[ClientAbilities] Loaded ability:", abilityId, "- Has Execute:", clientModule.Execute ~= nil)
 end
 
-local function _loadServerAbility(abilityId : number, abilityPackage: Types.AbilityPackage)
-    AbilityCache[abilityId] = require(abilityPackage:WaitForChild("Server"))
-    AbilityCache[abilityId].GetSharedModule = function()
+local function _loadServerAbility(abilityId : string, abilityPackage: Types.AbilityPackage)
+    print("[ClientAbilities Server] Loading ability:", abilityId)
+    
+    local serverModule = require(abilityPackage:WaitForChild("Server"))
+    serverModule.GetSharedModule = function()
             local sharedMod = (require(abilityPackage.Shared) :: Types.Shared)
             
             sharedMod.GetAssets = function()
@@ -46,6 +58,9 @@ local function _loadServerAbility(abilityId : number, abilityPackage: Types.Abil
     
             return sharedMod
         end
+    
+    AbilityCache[abilityId] = serverModule
+    print("[ClientAbilities Server] Loaded ability:", abilityId)
 end
 
 if RunService:IsClient() then

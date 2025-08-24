@@ -220,7 +220,7 @@ function Client.Execute(context: Types.SharedAbilityContext)
     
     return {
         success = true,
-        message = "RemM1 executed"
+        message = "RemM2 executed"
     }
 end
 

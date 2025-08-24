@@ -7,21 +7,28 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerStorage = game:GetService("ServerStorage")
 
 game:GetService("Players").PlayerAdded:Connect(function(player)
-    task.delay(2, function()
-        warn(ServerStorage.Abilities:GetChildren())
-        for _, mod in ServerStorage.Abilities:GetChildren() do
-            local modClone = mod:Clone()
-            modClone.Parent = ReplicatedStorage.Modules.ClientAbilities
-
-            LoadClientModule:FireClient(player, modClone.Name, modClone)
-        end
-    end)
+    print("[AbilityInitializer] Loading abilities for player:", player.Name)
+    print("[AbilityInitializer] Available abilities:", ServerStorage.Abilities:GetChildren())
+    
+    for _, mod in ServerStorage.Abilities:GetChildren() do
+        print("[AbilityInitializer] Loading ability:", mod.Name)
+        local modClone = mod:Clone()
+        modClone.Parent = ReplicatedStorage.Modules.ClientAbilities
+        
+        LoadClientModule:FireClient(player, mod.Name, modClone)
+        print("[AbilityInitializer] Sent", mod.Name, "to client")
+    end
+    
+    print("[AbilityInitializer] Finished loading abilities for player:", player.Name)
 end)
 
 
- for _, mod in ServerStorage.Abilities:GetChildren() do
+print("[AbilityInitializer] Loading server abilities...")
+for _, mod in ServerStorage.Abilities:GetChildren() do
+    print("[AbilityInitializer Server] Loading ability:", mod.Name)
     local modClone = mod:Clone()
     modClone.Parent = ReplicatedStorage.Modules.ClientAbilities
-    LoadServerModule:Fire(modClone.Name, modClone)
-    print(mod)
+    LoadServerModule:Fire(mod.Name, modClone)
+    print("[AbilityInitializer Server] Loaded:", mod.Name)
 end
+print("[AbilityInitializer] Server abilities loaded")

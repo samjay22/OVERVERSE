@@ -24,7 +24,7 @@ local Config: {
     LIGHT_RANGE: number,
     PARTICLE_RATE: number,
     ABILITY_CATEGORY: Types.AbilityCategory,
-
+    
     -- Primary ability uses ammo system instead of cooldown
     ATTACK_RANGE: number,
     MAX_AMMO: number,
@@ -37,9 +37,9 @@ local Config: {
 } = {
     -- Ability Configuration
     ABILITY_CLASS = "Rem",
-    ANIMATION_NAME = "M1",
+    ANIMATION_NAME = "M2",
     REQUIRES_TARGET = true,
-    HEAL_AMOUNT = 45, -- Increased healing to make it more impactful
+    HEAL_AMOUNT = 20, -- Lower damage for M2
     HEAL_RANGE_MULTIPLIER = 0.8, -- Allow healing at 80% of max range for flexibility
     OVERHEAL_PERCENTAGE = 0.15, -- Allow 15% overheal for strategic play
 
@@ -48,11 +48,11 @@ local Config: {
     ANIM_PRIORITY = Enum.AnimationPriority.Action4,
 
     -- Projectile Constants
-    PROJECTILE_SPEED = 95, -- Slightly faster for responsiveness
-    SPIRAL_RADIUS = 3.5, -- Tighter spiral for precision
-    SPIRAL_FREQUENCY = 8, -- More spiral rotations for visual appeal
-    PROJECTILE_SIZE = Vector3.new(0.4, 0.4, 0.4), -- Slightly larger
-    PROJECTILE_COLOR = Color3.new(0.15, 1, 0.4), -- More vibrant healing color
+    PROJECTILE_SPEED = 120, -- Faster projectile for M2
+    SPIRAL_RADIUS = 2.5, -- Tighter spiral
+    SPIRAL_FREQUENCY = 10, -- More spiral rotations
+    PROJECTILE_SIZE = Vector3.new(0.6, 0.6, 0.6), -- Larger projectile
+    PROJECTILE_COLOR = Color3.new(0.8, 0.2, 0.9), -- Purple color for M2
 
     -- Effect Constants
     EFFECT_CLEANUP_TIME = 2.5,
@@ -61,11 +61,11 @@ local Config: {
     PARTICLE_RATE = 40, -- More particles for better visibility
     ABILITY_CATEGORY = "Primary",
     
-    -- Primary ability resource system (ammo instead of cooldown)
-    ATTACK_RANGE = 120, -- Increased range for better utility
-    MAX_AMMO = 6, -- 6 healing shots before reload
-    RELOAD_TIME = 2.5, -- 2.5 second reload time
-    COOLDOWN_TIME = 1.6, -- Cooldown between shots
+    -- Primary ability resource system (cooldown for M2)
+    ATTACK_RANGE = 100, -- Slightly shorter range
+    MAX_AMMO = 1, -- Single shot
+    RELOAD_TIME = 1.0, -- 1 second cooldown
+    COOLDOWN_TIME = 1.0, -- 1 second cooldown (duplicate for compatibility)
     
     -- Audio Configuration
     SOUND_CAST_ID = "rbxasset://sounds/electronicpingshort.wav", -- Default Roblox sound

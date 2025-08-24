@@ -1,27 +1,29 @@
---!nonstrict
+--!strict
 -- CombatService: centralized combat logic
 
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Constants = require(game.ReplicatedStorage.Modules.Utility.Constants)
 
 local CharacterTypes = require(game.ServerStorage.Modules.Types.CharacterTypes)
 local CombatTypes = require(game.ServerStorage.Modules.Types.CombatTypes)
+local StateHelpers = require(game.ServerStorage.Modules.Types.CharacterStateTypes)
 local CombatEventBus = require(game.ServerStorage.Modules.Events.CombatEventBus)
+
+export type CombatService = CombatTypes.ICombatService
 
 local CombatService = {}
 CombatService.__index = CombatService
 
-function CombatService.New()
-    local self = setmetatable({}, CombatService)
+function CombatService.New(): CombatService
+    local self = setmetatable({}, CombatService) :: any
     self._config = {
         ATTACK_COOLDOWN = Constants.ATTACK_COOLDOWN or 0.5,
         ATTACK_STAMINA_COST = Constants.ATTACK_STAMINA_COST or 10,
         BLOCK_EFFICIENCY = Constants.BLOCK_EFFICIENCY or 0.5,
         COMBO_RESET_TIME = Constants.COMBO_RESET_TIME or 3,
         GUARD_BREAK_RECOVERY_TIME = Constants.GUARD_BREAK_RECOVERY_TIME or 2,
-    }
+    } :: CombatTypes.CombatConfig
     self._buses = {} :: {[number]: any}
-    return self
+    return self :: CombatService
 end
 
 function CombatService:Initialize(character: CharacterTypes.internalCharacter, config: CombatTypes.CombatConfig?)
@@ -31,23 +33,23 @@ function CombatService:Initialize(character: CharacterTypes.internalCharacter, c
         LastBlockTime = 0,
         ComboCount = 0,
         GuardBreakRecovery = 0,
-    }
+    } :: CombatTypes.CombatPerCharacter
 
     if config then
         for k, v in pairs(config) do
-            (self._config :: any)[k] = v
+            ((self :: any)._config :: any)[k] = v
         end
     end
 
-    local bus = self._buses[character.PlayerId]
+    local bus = ((self :: any)._buses :: any)[character.PlayerId]
     if not bus then
         bus = CombatEventBus.New()
-        self._buses[character.PlayerId] = bus
-        table.insert(character._connections, bus.AttackRequested:Connect(function(attackType)
+        ;((self :: any)._buses :: any)[character.PlayerId] = bus
+        table.insert(character._connections, bus.AttackRequested:Connect(function(attackType: string?)
             local ok = self:PerformAttack(character, attackType)
             bus.AttackPerformed:Fire(ok, attackType, (character.Components.Combat and character.Components.Combat.ComboCount) or 0)
         end))
-        table.insert(character._connections, bus.BlockRequested:Connect(function(shouldBlock)
+        table.insert(character._connections, bus.BlockRequested:Connect(function(shouldBlock: boolean)
             local ok = self:PerformBlock(character, shouldBlock)
             if ok then
                 bus.BlockStateChanged:Fire(shouldBlock)
@@ -69,22 +71,26 @@ function CombatService:Initialize(character: CharacterTypes.internalCharacter, c
         end)
     end
 
-    character.StateManager:OnStateChange("Guard", function(newGuard: number)
-        if newGuard <= 0 and not character.StateManager:Get("IsStunned") then
+    character.StateManager:OnStateChange("Guard", function(newGuard, oldGuard)
+        local guardValue = StateHelpers.asNumber(newGuard, 0)
+        local isStunned = StateHelpers.asBoolean(character.StateManager:Get("IsStunned"), false)
+        if guardValue <= 0 and not isStunned then
             self:HandleGuardBreak(character)
         end
     end)
 
-    character.StateManager:OnStateChange("MaxGuard", function(newMaxGuard: number)
-        local currentGuard = character.StateManager:Get("Guard")
-        if currentGuard > newMaxGuard then
-            character.StateManager:Set("Guard", newMaxGuard)
+    character.StateManager:OnStateChange("MaxGuard", function(newMaxGuard, _oldMaxGuard)
+        local maxGuardValue = StateHelpers.asNumber(newMaxGuard, 100)
+        local currentGuard = StateHelpers.asNumber(character.StateManager:Get("Guard"), 0)
+        if currentGuard > maxGuardValue then
+            character.StateManager:Set("Guard", maxGuardValue)
         end
     end)
 
-    character.StateManager:OnStateChange("IsBlocking", function(isBlocking: boolean)
+    character.StateManager:OnStateChange("IsBlocking", function(isBlocking, _oldBlocking)
+        local isBlockingValue = StateHelpers.asBoolean(isBlocking, false)
         local combatData = character.Components.Combat
-        if isBlocking then
+        if isBlockingValue then
             combatData.LastBlockTime = time()
         end
     end)
@@ -126,22 +132,23 @@ function CombatService:Update(character: CharacterTypes.internalCharacter, dt: n
         combatData.GuardBreakRecovery = 0
     end
 
-    if not stateManager:Get("IsStunned") then
+    local isStunned = StateHelpers.asBoolean(stateManager:Get("IsStunned"), false)
+    if not isStunned then
         -- Use state-projected values (kept up to date by EffectComponent)
-        local guard = stateManager:Get("Guard")
-        local maxGuard = stateManager:Get("MaxGuard")
-        local isBlocking = stateManager:Get("IsBlocking")
+        local guard = StateHelpers.asNumber(stateManager:Get("Guard"), 0)
+        local maxGuard = StateHelpers.asNumber(stateManager:Get("MaxGuard"), 100)
+        local isBlocking = StateHelpers.asBoolean(stateManager:Get("IsBlocking"), false)
         if not isBlocking and guard < maxGuard then
             local baseRegen = ((Constants.REGEN_RATES and Constants.REGEN_RATES.Guard and Constants.REGEN_RATES.Guard.regenRate) or 15)
-            local mult = (stateManager:Get("GuardRegenMult") or 1)
+            local mult = StateHelpers.asNumber(stateManager:Get("GuardRegenMult"), 1)
             local guardChange = dt * baseRegen * mult
             stateManager:Set("Guard", math.min(maxGuard, guard + guardChange))
         end
         -- stamina passive bonus example
-        local staminaBonus = stateManager:Get("StaminaRegenBonus") or 0
+        local staminaBonus = StateHelpers.asNumber(stateManager:Get("StaminaRegenBonus"), 0)
         if staminaBonus ~= 0 then
-            local s = stateManager:Get("Stamina")
-            local ms = stateManager:Get("MaxStamina")
+            local s = StateHelpers.asNumber(stateManager:Get("Stamina"), 0)
+            local ms = StateHelpers.asNumber(stateManager:Get("MaxStamina"), 100)
             if s < ms then stateManager:Set("Stamina", math.min(ms, s + staminaBonus * dt)) end
         end
 
@@ -160,18 +167,24 @@ function CombatService:PerformAttack(character: CharacterTypes.internalCharacter
     local stateManager = character.StateManager
     local combatData = character.Components.Combat
 
-    if stateManager:Get("IsDead") or stateManager:Get("IsStunned") or stateManager:Get("IsBlocking") then
+    local isDead = StateHelpers.asBoolean(stateManager:Get("IsDead"), false)
+    local isStunned = StateHelpers.asBoolean(stateManager:Get("IsStunned"), false)
+    local isBlocking = StateHelpers.asBoolean(stateManager:Get("IsBlocking"), false)
+    
+    if isDead or isStunned or isBlocking then
         return false
     end
 
     local currentTime = time()
-    local attackCooldown = self._config.ATTACK_COOLDOWN * (stateManager:Get("AttackCooldownMult") or 1)
+    local attackCooldownMult = StateHelpers.asNumber(stateManager:Get("AttackCooldownMult"), 1)
+    local attackCooldown = (self :: any)._config.ATTACK_COOLDOWN * attackCooldownMult
     if currentTime - combatData.LastAttackTime < attackCooldown then
         return false
     end
 
-    local staminaCost = self._config.ATTACK_STAMINA_COST * (stateManager:Get("StaminaCostMult") or 1)
-    local currentStamina = stateManager:Get("Stamina")
+    local staminaCostMult = StateHelpers.asNumber(stateManager:Get("StaminaCostMult"), 1)
+    local staminaCost = (self :: any)._config.ATTACK_STAMINA_COST * staminaCostMult
+    local currentStamina = StateHelpers.asNumber(stateManager:Get("Stamina"), 0)
     if currentStamina < staminaCost then
         return false
     end
@@ -221,23 +234,24 @@ end
 
 function CombatService:TakeDamage(character: CharacterTypes.internalCharacter, damage: number, canBlock: boolean?): number
     local stateManager = character.StateManager
-    if stateManager:Get("IsDead") then return 0 end
+    local isDead = StateHelpers.asBoolean(stateManager:Get("IsDead"), false)
+    if isDead then return 0 end
 
     local actualDamage = damage
-    local isBlocking = stateManager:Get("IsBlocking")
+    local isBlocking = StateHelpers.asBoolean(stateManager:Get("IsBlocking"), false)
 
     if isBlocking and canBlock ~= false then
-        local guard = stateManager:Get("Guard")
-        local blockedDamage = damage * self._config.BLOCK_EFFICIENCY
-        local guardDamage = damage * (1 - self._config.BLOCK_EFFICIENCY)
+        local guard = StateHelpers.asNumber(stateManager:Get("Guard"), 0)
+        local blockedDamage = damage * (self :: any)._config.BLOCK_EFFICIENCY
+        local guardDamage = damage * (1 - (self :: any)._config.BLOCK_EFFICIENCY)
         stateManager:Set("Guard", math.max(0, guard - guardDamage))
         actualDamage = blockedDamage
     end
 
-    local currentHealth = stateManager:Get("Health")
-    local incomingMult = (stateManager:Get("IncomingDamageMult") or 1)
+    local currentHealth = StateHelpers.asNumber(stateManager:Get("Health"), 100)
+    local incomingMult = StateHelpers.asNumber(stateManager:Get("IncomingDamageMult"), 1)
     stateManager:Set("Health", math.max(0, currentHealth - (actualDamage * incomingMult)))
-    local bus = self._buses[character.PlayerId]
+    local bus = ((self :: any)._buses :: any)[character.PlayerId]
     if bus then
         local wasBlocked = (isBlocking and canBlock ~= false) or false
         bus.DamageApplied:Fire(actualDamage, wasBlocked)
@@ -250,7 +264,8 @@ function CombatService:ApplyDamage(attacker: CharacterTypes.internalCharacter?, 
     local outgoingMult = 1
     if attacker then
         local smA = attacker.StateManager
-        outgoingMult = (smA and smA:Get("OutgoingDamageMult")) or 1
+        local outgoingMultValue = StateHelpers.asNumber(smA:Get("OutgoingDamageMult"), 1)
+        outgoingMult = outgoingMultValue
     end
     local adjusted = baseDamage * outgoingMult
     return self:TakeDamage(target, adjusted, canBlock)

@@ -1,13 +1,13 @@
---!nonstrict
+--!strict
 export type AssetValue = {
-    AssetId : string,
-    Instance : Instance? -- Optional, can be nil if not loaded
+    AssetId: string,
+    Instance: Instance?, -- Optional, can be nil if not loaded
 }
 
 export type AssetHandler = {
-    GetHandlerName : () -> string,    
-    GetAsset : (assetName: string) -> AssetValue?,
-    GetAllAssets : () -> { [string]: AssetValue },
+    GetHandlerName: (self: AssetHandler) -> string,    
+    GetAsset: (self: AssetHandler, assetName: string) -> AssetValue?,
+    GetAllAssets: (self: AssetHandler) -> { [string]: AssetValue },
 }
 
 return 0

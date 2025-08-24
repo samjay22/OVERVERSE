@@ -24,7 +24,7 @@ local Config: {
     LIGHT_RANGE: number,
     PARTICLE_RATE: number,
     ABILITY_CATEGORY: Types.AbilityCategory,
-
+    
     -- Primary ability uses ammo system instead of cooldown
     ATTACK_RANGE: number,
     MAX_AMMO: number,
@@ -36,36 +36,36 @@ local Config: {
     SOUND_VOLUME: number,
 } = {
     -- Ability Configuration
-    ABILITY_CLASS = "Rem",
-    ANIMATION_NAME = "M1",
-    REQUIRES_TARGET = true,
-    HEAL_AMOUNT = 45, -- Increased healing to make it more impactful
-    HEAL_RANGE_MULTIPLIER = 0.8, -- Allow healing at 80% of max range for flexibility
-    OVERHEAL_PERCENTAGE = 0.15, -- Allow 15% overheal for strategic play
+    ABILITY_CLASS = "Dash",
+    ANIMATION_NAME = "Dash",
+    REQUIRES_TARGET = false,
+    HEAL_AMOUNT = 0, -- No healing for dash
+    HEAL_RANGE_MULTIPLIER = 1.0, -- Not used for dash
+    OVERHEAL_PERCENTAGE = 0, -- Not used for dash
 
     -- Animation Constants
     ANIM_FADE_TIME = 0.125,
     ANIM_PRIORITY = Enum.AnimationPriority.Action4,
 
-    -- Projectile Constants
-    PROJECTILE_SPEED = 95, -- Slightly faster for responsiveness
-    SPIRAL_RADIUS = 3.5, -- Tighter spiral for precision
-    SPIRAL_FREQUENCY = 8, -- More spiral rotations for visual appeal
-    PROJECTILE_SIZE = Vector3.new(0.4, 0.4, 0.4), -- Slightly larger
-    PROJECTILE_COLOR = Color3.new(0.15, 1, 0.4), -- More vibrant healing color
+    -- Projectile Constants (not used for dash)
+    PROJECTILE_SPEED = 0, -- No projectile
+    SPIRAL_RADIUS = 0, -- No spiral
+    SPIRAL_FREQUENCY = 0, -- No spiral
+    PROJECTILE_SIZE = Vector3.new(0, 0, 0), -- No projectile
+    PROJECTILE_COLOR = Color3.new(0.5, 0.5, 1), -- Blue color for dash effects
 
     -- Effect Constants
     EFFECT_CLEANUP_TIME = 2.5,
     LIGHT_BRIGHTNESS = 4, -- Brighter healing light
     LIGHT_RANGE = 10, -- Larger light range
     PARTICLE_RATE = 40, -- More particles for better visibility
-    ABILITY_CATEGORY = "Primary",
+    ABILITY_CATEGORY = "Active",
     
-    -- Primary ability resource system (ammo instead of cooldown)
-    ATTACK_RANGE = 120, -- Increased range for better utility
-    MAX_AMMO = 6, -- 6 healing shots before reload
-    RELOAD_TIME = 2.5, -- 2.5 second reload time
-    COOLDOWN_TIME = 1.6, -- Cooldown between shots
+    -- Dash ability configuration
+    ATTACK_RANGE = 50, -- Dash distance
+    MAX_AMMO = 1, -- Single use
+    RELOAD_TIME = 3.0, -- 3 second cooldown
+    COOLDOWN_TIME = 3.0, -- 3 second cooldown (duplicate for compatibility)
     
     -- Audio Configuration
     SOUND_CAST_ID = "rbxasset://sounds/electronicpingshort.wav", -- Default Roblox sound

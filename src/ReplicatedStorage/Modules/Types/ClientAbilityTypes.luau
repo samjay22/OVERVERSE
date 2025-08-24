@@ -5,7 +5,7 @@ export type GameTimestamp = number
 export type ClassId = string | number
 
 -- Ability categorization for clearer separation of logic
-export type AbilityCategory = "Primary" | "Active" | "Passive"
+export type AbilityCategory = "Primary" | "Active" | "Passive" | "Secondary" | "Ultimate"
 
 export type AbilityPackage = {
     Config : ModuleScript,
@@ -24,8 +24,10 @@ export type Shared = {
 export type AbilityConfig = {
     ABILITY_CATEGORY : AbilityCategory,
     REQUIRES_TARGET : boolean,
-    COOLDOWN_TIME : number,
     ATTACK_RANGE : number,
+    COOLDOWN_TIME : number?, -- Optional for ammo-based abilities
+    MAX_AMMO : number?, -- Optional for cooldown-based abilities
+    RELOAD_TIME : number?, -- Optional for cooldown-based abilities
     [string] : any,
 }
 -- Belongs to ClientAbilityPackage.Client module

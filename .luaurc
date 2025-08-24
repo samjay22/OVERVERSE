@@ -6,8 +6,6 @@
 		"Effects": "./src/ReplicatedStorage/Modules/AssetHandlers/Effects.luau",
 		"Weapons": "./src/ReplicatedStorage/Modules/AssetHandlers/Weapons.luau",
 		"init": "./src/ReplicatedStorage/Modules/AssetHandlers/init.luau",
-		"Dash": "./src/ReplicatedStorage/Modules/ClientAbilities/Dash.luau",
-		"RemM2": "./src/ReplicatedStorage/Modules/ClientAbilities/RemM2.luau",
 		"CameraFollow": "./src/ReplicatedStorage/Modules/CoreClient/CameraFollow.luau",
 		"ShiftLock": "./src/ReplicatedStorage/Modules/CoreClient/ShiftLock.luau",
 		"Targeting": "./src/ReplicatedStorage/Modules/CoreClient/Targeting.luau",
@@ -109,6 +107,13 @@
 		"CameraController": "./src/StarterPlayerScripts/CameraController.client.luau",
 		"MouseController": "./src/StarterPlayerScripts/MouseController.client.luau",
 		"MovementAnimationHandler": "./src/StarterPlayerScripts/MovementAnimationHandler.client.luau",
-		"PassiveAbilityManager": "./src/StarterPlayerScripts/PassiveAbilityManager.client.luau"
+		"PassiveAbilityManager": "./src/StarterPlayerScripts/PassiveAbilityManager.client.luau",
+		"ClientCategoryHandler": "./src/ReplicatedStorage/Modules/Utility/ClientCategoryHandler.luau",
+		"CategoryValidator": "./src/ServerStorage/Modules/AbilityValidation/CategoryValidator.luau",
+		"ClientCategoryValidator": "./src/ReplicatedStorage/Modules/Utility/ClientCategoryValidator.luau",
+		"CategorySystem": "./src/ReplicatedStorage/Modules/Utility/CategorySystem.luau",
+		"CategoryHandler": "./src/ServerStorage/Modules/AbilityValidation/CategoryHandler.luau",
+		"CharacterStateTypes": "./src/ServerStorage/Modules/Types/CharacterStateTypes.luau",
+		"UnifiedValidator": "./src/ReplicatedStorage/Modules/Core/UnifiedValidator.luau"
 	}
 }

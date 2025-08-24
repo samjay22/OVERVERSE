@@ -84,6 +84,40 @@ playCharacterAnimation = function(animName: string, targetPosition: Vector3?): A
 end
 
 local Client : Types.ClientAbility = {
+    -- Main execution function called by CategoryHandler
+    Execute = function(context: SharedAbilityContext)
+        -- Call the OnCast function for backward compatibility
+        Client.OnCast(context, nil)
+        
+        return {
+            success = true,
+            message = "RemE executed"
+        }
+    end,
+    
+    -- Validation function
+    Validate = function(context: SharedAbilityContext): Types.ValidationResult
+        local character = Players.LocalPlayer.Character
+        if not character then
+            return {
+                success = false,
+                reason = "No character"
+            }
+        end
+        
+        local humanoid = character:FindFirstChildOfClass("Humanoid")
+        if not humanoid or humanoid.Health <= 0 then
+            return {
+                success = false,
+                reason = "Character is dead"
+            }
+        end
+        
+        return {
+            success = true
+        }
+    end,
+    
     OnRequest = function(ctx: SharedAbilityContext): AbilityResult
         return {
             success = true,

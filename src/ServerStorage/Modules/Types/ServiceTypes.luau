@@ -1,13 +1,18 @@
---!nonstrict
-local Types = {}
+--!strict
+
+local CoreTypes = require(game.ServerStorage.Modules.Types.CoreTypes)
 
 export type ServiceCallback = (...any) -> ()
+
+export type StateValue = CoreTypes.StateValue
+export type StateChangeCallback = CoreTypes.StateChangeCallback
+
 export type StateManager = {
-    Get: (self: StateManager, state: string) -> any,
-    Set: (self: StateManager, state: string, value: any) -> (),
-    SetMultiple: (self: StateManager, states: { [string]: any }) -> (),
-    GetAllStates: (self: StateManager) -> { [string]: any },
-    OnStateChange: (self: StateManager, state: string, callback: (new: any, old: any) -> ()) -> ()
+    Get: (self: StateManager, state: string) -> StateValue,
+    Set: (self: StateManager, state: string, value: StateValue) -> (),
+    SetMultiple: (self: StateManager, states: { [string]: StateValue }) -> (),
+    GetAllStates: (self: StateManager) -> { [string]: StateValue },
+    OnStateChange: (self: StateManager, state: string, callback: StateChangeCallback) -> ()
 }
 
 export type ResourceHandlers = {
@@ -27,4 +32,4 @@ export type CharacterInstance = {
     StateManager: StateManager
 }
 
-return Types
+return {}

@@ -1,10 +1,10 @@
---!nonstrict
+--!strict
 local InsertService = game:GetService("InsertService")
 
 local AssetTypes = require(game.ReplicatedStorage.Modules.Types.AssetTypes)
 
-local assetCache : { [string]: AssetTypes.AssetValue } = {}
-local assetIdMap = {
+local assetCache: { [string]: AssetTypes.AssetValue } = {}
+local assetIdMap: {[string]: string} = {
     Default = "121165247373475",
 }
 
@@ -20,7 +20,8 @@ local function loadAsset(assetName: string): AssetTypes.AssetValue?
 
     -- Lazy load the actual Roblox asset
     local success, result = pcall(function()
-        local weaponModel = InsertService:LoadAsset(tonumber(assetId)):GetChildren()[1] -- Assuming the asset is a single model
+        local assetModel = InsertService:LoadAsset(tonumber(assetId) :: number)
+        local weaponModel = assetModel:GetChildren()[1] -- Assuming the asset is a single model
         if not weaponModel then
             error("Failed to load weapon model for asset: " .. assetName)
         end
@@ -35,7 +36,7 @@ local function loadAsset(assetName: string): AssetTypes.AssetValue?
     end)
 
     if success and result then
-        local assetValue = { 
+        local assetValue: AssetTypes.AssetValue = { 
             AssetId = assetId,
             Instance = result,
         }
@@ -47,23 +48,24 @@ local function loadAsset(assetName: string): AssetTypes.AssetValue?
     end
 end
 
-local WeaponAssets = {}
+local WeaponAssets = {} :: AssetTypes.AssetHandler
 
-function WeaponAssets.GetHandlerName(): string
+function WeaponAssets:GetHandlerName(): string
     return "Weapons"
 end
 
-function WeaponAssets.GetAllAssets(): { [string]: AssetTypes.AssetValue }
+function WeaponAssets:GetAllAssets(): { [string]: AssetTypes.AssetValue }
     -- Return cached assets without forcing load of all
     -- This maintains lazy loading principle
     return assetCache
 end
 
-function WeaponAssets.GetAsset(assetName : string): AssetTypes.AssetValue?
+function WeaponAssets:GetAsset(assetName: string): AssetTypes.AssetValue?
     return loadAsset(assetName)
 end
 
-function WeaponAssets.PreloadAssets(assetNames: {string}): ()
+-- Optional utility function (not part of the interface)
+local function _PreloadAssets(assetNames: {string}): ()
     -- Optional: preload specific assets if needed
     for _, name in assetNames do
         loadAsset(name)

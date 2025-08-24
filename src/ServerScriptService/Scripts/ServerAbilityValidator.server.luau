@@ -15,6 +15,8 @@ local Types = require(AbilityValidationRoot:WaitForChild("Types"))
 local ServerStateManager = require(AbilityValidationRoot:WaitForChild("State"):WaitForChild("ServerStateManager"))
 local AntiCheatValidator = require(AbilityValidationRoot:WaitForChild("AntiCheat"):WaitForChild("AntiCheatValidator"))
 local Remotes = require(AbilityValidationRoot:WaitForChild("Network"):WaitForChild("Remotes"))
+local CategoryHandler = require(AbilityValidationRoot:WaitForChild("CategoryHandler"))
+local CategoryValidator = require(AbilityValidationRoot:WaitForChild("CategoryValidator"))
 local AbilityTypes = require(game.ServerStorage.Modules.Types.AbilityTypes)
 
 -- Updated to use the new ServerAbilities loader system
@@ -157,6 +159,12 @@ function ServerAbilityValidator.new()
 
     self.predictionRemote.OnServerEvent:Connect(function(player, requestData)
         self:HandlePredictionRequest(player, requestData)
+    end)
+    
+    -- Register reload remote event for R key reload functionality
+    self.reloadRemote = _NetworkServer:RegisterRemoteEvent("AbilityReload")
+    self.reloadRemote.OnServerEvent:Connect(function(player, reloadData)
+        self:HandleReloadRequest(player, reloadData)
     end)
 
     return self
@@ -429,18 +437,22 @@ function ServerAbilityValidator:HandlePredictionRequest(player: Player, requestD
         characterState = serverState,
     }
 
-    -- Execute ability with error handling
+    -- Category-based validation before execution
+    local validationResult = CategoryValidator.ValidateAbility(abilityModule, context)
+    if not validationResult.success then
+        return self:SendValidationResult(player, createValidationResult(
+            predictionId, false, validationResult.reason or "Category validation failed", serverState
+        ))
+    end
+    
+    -- Execute ability using category-based dispatcher with error handling
     local success, result = pcall(function()
-        print(abilityModule)
-        if abilityModule.OnRequest then
-            return abilityModule.OnRequest(context)
-        else
-            return { success = false, reason = "No onRequest method" }
-        end
+        return CategoryHandler.ExecuteAbility(abilityModule, context)
     end)
+    
     if not success or type(result) ~= "table" or result.success == nil then
         return self:SendValidationResult(player, createValidationResult(
-            predictionId, false, "Ability execution error", serverState
+            predictionId, false, "Ability execution error: " .. tostring(result), serverState
         ))
     end
 
@@ -457,6 +469,53 @@ function ServerAbilityValidator:HandlePredictionRequest(player: Player, requestD
     
     -- Performance tracking
     updatePerformanceStats(tick() - startTime)
+end
+
+-- Handle R key reload requests
+function ServerAbilityValidator:HandleReloadRequest(player: Player, reloadData: any)
+    -- Basic validation
+    if type(reloadData) ~= "table" then
+        warn("Invalid reload request from", player.Name)
+        return
+    end
+    
+    local playerId = reloadData.playerId
+    local abilityId = reloadData.abilityId
+    
+    -- Validate that the player is who they claim to be
+    if playerId ~= player.UserId then
+        warn("Player ID mismatch in reload request from", player.Name)
+        return
+    end
+    
+    -- Validate ability ID
+    if type(abilityId) ~= "number" then
+        warn("Invalid ability ID in reload request from", player.Name)
+        return
+    end
+    
+    -- Use CategoryHandler to handle the reload
+    local success = CategoryHandler.HandleReload(playerId, abilityId)
+    
+    if success then
+        print("Reload successful for player", player.Name, "ability", abilityId)
+        -- Optionally, send confirmation back to client
+        local reloadConfirmRemote = _NetworkServer:RegisterRemoteEvent("AbilityReloadConfirm")
+        reloadConfirmRemote:FireClient(player, {
+            abilityId = abilityId,
+            success = true,
+            timestamp = tick()
+        })
+    else
+        print("Reload failed for player", player.Name, "ability", abilityId)
+        local reloadConfirmRemote = _NetworkServer:RegisterRemoteEvent("AbilityReloadConfirm")
+        reloadConfirmRemote:FireClient(player, {
+            abilityId = abilityId,
+            success = false,
+            reason = "Cannot reload this ability",
+            timestamp = tick()
+        })
+    end
 end
 
 local globalValidator = ServerAbilityValidator.new()
