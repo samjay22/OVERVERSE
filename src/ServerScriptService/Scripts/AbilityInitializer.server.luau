@@ -9,10 +9,7 @@ game:GetService("Players").PlayerAdded:Connect(function(player)
     repeat task.wait() until #ReplicatedStorage.Modules.ClientAbilities:GetChildren() > 0
 
     for _, mod in ReplicatedStorage.Modules.ClientAbilities:GetChildren() do
-        local modClone = mod:Clone()
-        modClone.Parent = ReplicatedStorage.Modules.ClientAbilities
-        
-        LoadClientModule:FireClient(player, mod.Name, modClone)
+        LoadClientModule:FireClient(player, mod.Name, mod)
     end
     
     print("[AbilityInitializer] Finished loading abilities for player:", player.Name)

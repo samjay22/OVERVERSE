@@ -19,15 +19,9 @@ function Shared.IsValid(ctx: Types.SharedAbilityContext): boolean
     return true
 end
 
-function Shared.GetConfig(): Types.AbilityConfig
-    return {
-        ABILITY_CATEGORY = Config.ABILITY_CATEGORY,
-        REQUIRES_TARGET = Config.REQUIRES_TARGET,
-        COOLDOWN_TIME = Config.COOLDOWN_TIME,
-        ATTACK_RANGE = Config.ATTACK_RANGE,
-        HEAL_AMOUNT = Config.HEAL_AMOUNT,
-        MANA_COST = Config.MANA_COST,
-    }
+function Shared.GetConfig()
+    -- Return the full config directly
+    return Config
 end
 
 function Shared.GetAssets(): Folder

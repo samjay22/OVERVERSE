@@ -14,23 +14,12 @@ local Config = require(script.Parent.Config)
 
 local Player = Players.LocalPlayer
 
-type AbilityAssets = typeof(script.Parent.Assets)
-local effectsFolder : AbilityAssets = script.Parent.Assets
+local Assets = script.Parent.Assets
 
 local Client = {}
 
--- Audio system
-local function playSoundEffect(soundId: string, volume: number?)
-    local sound = Instance.new("Sound")
-    sound.SoundId = soundId
-    sound.Volume = volume or Config.SOUND_VOLUME
-    sound.Parent = SoundService
-    sound:Play()
-    
-    sound.Ended:Connect(function()
-        sound:Destroy()
-    end)
-end
+-- Track pending server requests for rollback (if needed for server communication)
+local pendingCasts = {} :: {[number]: boolean}
 
 -- Helper function to get character and humanoid
 local function getCharacterData()
@@ -45,95 +34,39 @@ end
 
 -- Execute the healing projectile attack
 local function executeAttack(timestamp: number?, targetPosition: Vector3?)
-    if not targetPosition then return end
+    print("[RemM1] executeAttack called with target:", targetPosition)
+    if not targetPosition then 
+        warn("[RemM1] No target position provided")
+        return 
+    end
     
     local character, humanoid = getCharacterData()
     if not character or not humanoid then return end
-    
+
+    local wand = character:FindFirstChild("Wand..") :: Tool?
+    if not wand then return end
+
     local humanoidRootPart = character:FindFirstChild("HumanoidRootPart") :: BasePart?
     if not humanoidRootPart then return end
     
-    -- Create healing projectile with enhanced visuals
+    -- Use healing projectile from assets only
+    local effectsFolder = Assets
+    if not effectsFolder or not effectsFolder:FindFirstChild("HealSpellTrail") then
+        warn("[RemM1] HealSpellTrail asset not found")
+        return
+    end
+
+    local castEffect = effectsFolder.CastHeal:Clone()
+    castEffect.CanCollide = false
+    castEffect.Anchored = true
+    castEffect.CFrame = CFrame.lookAt(wand:FindFirstChildOfClass("Part").Position, targetPosition)
+    castEffect.Parent = workspace
+
+    Debris:AddItem(castEffect, 1)
+    print("[RemM1] Using HealSpellTrail from assets")
     local projectile = effectsFolder.HealSpellTrail:Clone()
     projectile.CanCollide = false
     projectile.Anchored = true
-    projectile.Size = Config.PROJECTILE_SIZE
-    projectile.Color = Config.PROJECTILE_COLOR
-    projectile.Material = Enum.Material.ForceField
-    
-    -- Enhanced glowing effect with color animation
-    local pointLight = Instance.new("PointLight")
-    pointLight.Brightness = Config.LIGHT_BRIGHTNESS
-    pointLight.Range = Config.LIGHT_RANGE
-    pointLight.Color = Config.PROJECTILE_COLOR
-    pointLight.Parent = projectile
-    
-    -- Add bloom effect with SelectionBox
-    local selectionBox = Instance.new("SelectionBox")
-    selectionBox.Adornee = projectile
-    selectionBox.Color3 = Config.PROJECTILE_COLOR
-    selectionBox.LineThickness = 0.2
-    selectionBox.Transparency = 0.3
-    selectionBox.Parent = projectile
-    
-    -- Add particle effect attachment
-    local attachment = Instance.new("Attachment")
-    attachment.Parent = projectile
-    
-    -- Enhanced particle effects
-    local healParticles = effectsFolder:FindFirstChild("HealParticles")
-    if healParticles and healParticles:IsA("ParticleEmitter") then
-        local particleClone = healParticles:Clone()
-        particleClone.Parent = attachment
-        particleClone.Rate = Config.PARTICLE_RATE
-        particleClone.Color = ColorSequence.new(Config.PROJECTILE_COLOR)
-        particleClone:Emit(30)
-    else
-        -- Create default healing particles if not found
-        local defaultParticles = Instance.new("ParticleEmitter")
-        defaultParticles.Parent = attachment
-        defaultParticles.Color = ColorSequence.new(Config.PROJECTILE_COLOR)
-        defaultParticles.Size = NumberSequence.new{
-            NumberSequenceKeypoint.new(0, 0.2),
-            NumberSequenceKeypoint.new(0.5, 0.8),
-            NumberSequenceKeypoint.new(1, 0.1)
-        }
-        defaultParticles.Lifetime = NumberRange.new(0.3, 0.8)
-        defaultParticles.Rate = Config.PARTICLE_RATE
-        defaultParticles.Speed = NumberRange.new(2, 8)
-        defaultParticles.SpreadAngle = Vector2.new(45, 45)
-        defaultParticles.VelocityInheritance = 0.2
-        defaultParticles:Emit(25)
-    end
-    
-    -- Add trail effect for better visual tracking
-    local trailAttachment1 = Instance.new("Attachment")
-    trailAttachment1.Position = Vector3.new(0, 0, -1)
-    trailAttachment1.Parent = projectile
-    
-    local trailAttachment2 = Instance.new("Attachment")
-    trailAttachment2.Position = Vector3.new(0, 0, 1)
-    trailAttachment2.Parent = projectile
-    
-    local trail = Instance.new("Trail")
-    trail.Attachment0 = trailAttachment1
-    trail.Attachment1 = trailAttachment2
-    trail.Color = ColorSequence.new(Config.PROJECTILE_COLOR)
-    trail.Transparency = NumberSequence.new{
-        NumberSequenceKeypoint.new(0, 0.2),
-        NumberSequenceKeypoint.new(1, 1)
-    }
-    trail.Lifetime = 0.8
-    trail.MinLength = 0.1
-    trail.MaxLength = 20
-    trail.WidthScale = NumberSequence.new{
-        NumberSequenceKeypoint.new(0, 1),
-        NumberSequenceKeypoint.new(0.5, 0.8),
-        NumberSequenceKeypoint.new(1, 0)
-    }
-    trail.Parent = projectile
-    
-    projectile.Parent = workspace
     
     -- Calculate trajectory with spiral motion
     local startPosition = humanoidRootPart.Position + humanoidRootPart.CFrame.LookVector * 3
@@ -143,18 +76,16 @@ local function executeAttack(timestamp: number?, targetPosition: Vector3?)
     
     -- Enhanced projectile animation with pulsing light and rotation
     local startTime = tick()
-    local totalTime = distance / Config.PROJECTILE_SPEED
+    -- Use a minimum travel time to ensure the projectile is always visible
+    -- This gives a more consistent feel regardless of distance
+    local baseTime = distance / Config.PROJECTILE_SPEED
+    local minTime = 0.3 -- Minimum travel time for visual consistency
+    local totalTime = math.max(baseTime, minTime)
     
     -- Add rotation animation to projectile for visual appeal
     local rotationSpeed = 360 -- degrees per second
     
-    -- Animate light pulsing during flight
-    local lightPulse = game:GetService("TweenService"):Create(
-        pointLight,
-        TweenInfo.new(0.3, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
-        {Brightness = Config.LIGHT_BRIGHTNESS * 1.5}
-    )
-    lightPulse:Play()
+    -- Don't animate lights - let the asset handle its own effects
     
     local connection
     connection = RunService.Heartbeat:Connect(function()
@@ -164,20 +95,44 @@ local function executeAttack(timestamp: number?, targetPosition: Vector3?)
         if progress >= 1 then
             progress = 1
             connection:Disconnect()
-            lightPulse:Cancel()
+            -- No light pulse to cancel
         end
         
         -- Linear movement with enhanced spiral rotation
         local currentPosition = startPosition:Lerp(endPosition, progress)
         
-        -- Enhanced spiral motion with varying radius
-        local spiralAngle = progress * Config.SPIRAL_FREQUENCY * math.pi * 2
-        local spiralIntensity = math.sin(progress * math.pi) -- Peaks at midpoint
+        -- Enhanced spiral motion with varying radius - scale based on distance
+        local spiralAngle = (progress / 2) * Config.SPIRAL_FREQUENCY * math.pi * 2
+        local spiralIntensity = math.sin((progress / 2) * math.pi) -- Peaks at midpoint
+        
+        -- Scale spiral radius based on distance
+        -- Close range (0-15 studs): Reduced spiral
+        -- Mid range (15-30 studs): Normal spiral
+        -- Long range (30+ studs): Enhanced spiral
+        local distanceScale
+        if distance < 15 then
+            distanceScale = 30  -- Reduced spiral for close range
+            spiralAngle *= 0.5
+            spiralIntensity *= 0.5
+        elseif distance < 30 then
+            distanceScale = 1  -- Normal spiral for mid range
+        else
+            distanceScale = 1 + (distance - 30) / 60  -- Enhanced spiral for long range (up to 1.5x at 60 studs)
+        end
+        
+        local adjustedRadius = Config.SPIRAL_RADIUS * spiralIntensity * distanceScale
+        
         local spiralOffset = Vector3.new(
-            math.cos(spiralAngle) * Config.SPIRAL_RADIUS * spiralIntensity,
-            math.sin(spiralAngle) * Config.SPIRAL_RADIUS * spiralIntensity,
+            math.cos(spiralAngle) * adjustedRadius,
+            math.sin(spiralAngle) * adjustedRadius,
             0
         )
+
+        for _, emitter in pairs(projectile:GetDescendants()) do
+            if emitter:IsA("ParticleEmitter") then
+                emitter:Emit(5)
+            end
+        end
         
         -- Apply spiral in world space
         local rightVector = direction:Cross(Vector3.new(0, 1, 0)).Unit
@@ -191,18 +146,8 @@ local function executeAttack(timestamp: number?, targetPosition: Vector3?)
             elapsed * rotationSpeed,
             elapsed * rotationSpeed * 0.3
         )
-        
-        -- Scale projectile slightly during flight for better visual
-        local scale = 1 + math.sin(progress * math.pi) * 0.3
-        projectile.Size = Config.PROJECTILE_SIZE * scale
-        
-         for _, emitter in projectile:GetDescendants() do
-                if emitter:IsA("ParticleEmitter") then
-                    emitter.Color = ColorSequence.new(Config.PROJECTILE_COLOR)
-                    emitter:Emit(5)
-                end
-            end
-            
+        projectile.Parent = workspace
+                    
         -- On impact
         if progress >= 1 then
             -- Play impact sound with slight pitch variation
@@ -214,119 +159,25 @@ local function executeAttack(timestamp: number?, targetPosition: Vector3?)
             impactSound:Play()
             impactSound.Ended:Connect(function() impactSound:Destroy() end)
             
-            -- Create enhanced healing impact effect
-            local healEffect = effectsFolder.HealHit:Clone()
-            healEffect.CanCollide = false
-            healEffect.Anchored = true
-            healEffect.Position = projectile.Position
-            healEffect.Size = Vector3.new(0.1, 0.1, 0.1)
-            healEffect.Color = Config.PROJECTILE_COLOR
-            healEffect.Material = Enum.Material.Neon
-            healEffect.Parent = workspace
+            -- Use impact effect from assets
+            if effectsFolder and effectsFolder:FindFirstChild("HealHit") then
+                local healEffect = effectsFolder.HealHit:Clone()
+                healEffect.CanCollide = false
+                healEffect.Anchored = true
+                healEffect.Position = projectile.Position
+                healEffect.Parent = workspace
 
-            for _, emitter in healEffect:GetDescendants() do
-                if emitter:IsA("ParticleEmitter") then
-                    emitter.Color = ColorSequence.new(Config.PROJECTILE_COLOR)
-                    emitter:Emit(5)
+                for _, emitter in pairs(healEffect:GetDescendants()) do
+                    if emitter:IsA("ParticleEmitter") then
+                        emitter:Emit(5)
+                    end
                 end
+
+                -- Clean up after effect duration
+                Debris:AddItem(healEffect, Config.EFFECT_CLEANUP_TIME)
             end
 
-            -- Multiple layers of impact particles
-            local impactAttachment = Instance.new("Attachment")
-            impactAttachment.Parent = healEffect
-            
-            -- Create burst particles
-            local burstParticles = Instance.new("ParticleEmitter")
-            burstParticles.Parent = impactAttachment
-            burstParticles.Color = ColorSequence.new(Config.PROJECTILE_COLOR)
-            burstParticles.Size = NumberSequence.new{
-                NumberSequenceKeypoint.new(0, 0.5),
-                NumberSequenceKeypoint.new(0.2, 1.2),
-                NumberSequenceKeypoint.new(1, 0)
-            }
-            burstParticles.Lifetime = NumberRange.new(0.8, 1.5)
-            burstParticles.Speed = NumberRange.new(8, 15)
-            burstParticles.SpreadAngle = Vector2.new(60, 60)
-            burstParticles.Drag = 3
-            burstParticles.EmissionDirection = Enum.NormalId.Top
-            burstParticles:Emit(50)
-            
-            -- Create sparkle particles
-            local sparkleParticles = Instance.new("ParticleEmitter")
-            sparkleParticles.Parent = impactAttachment
-            sparkleParticles.Color = ColorSequence.new(Config.PROJECTILE_COLOR)
-            sparkleParticles.Size = NumberSequence.new{
-                NumberSequenceKeypoint.new(0, 0.1),
-                NumberSequenceKeypoint.new(0.5, 0.3),
-                NumberSequenceKeypoint.new(1, 0.1)
-            }
-            sparkleParticles.Lifetime = NumberRange.new(1.0, 2.0)
-            sparkleParticles.Speed = NumberRange.new(2, 6)
-            sparkleParticles.SpreadAngle = Vector2.new(180, 180)
-            sparkleParticles.Acceleration = Vector3.new(0, -10, 0)
-            sparkleParticles:Emit(30)
-
-            -- Enhanced healing light with animated intensity
-            local healLight = Instance.new("PointLight")
-            healLight.Brightness = Config.LIGHT_BRIGHTNESS * 3
-            healLight.Range = Config.LIGHT_RANGE * 2
-            healLight.Color = Config.PROJECTILE_COLOR
-            healLight.Parent = healEffect
-            
-            -- Create expanding shockwave effect
-            local shockwave = Instance.new("Part")
-            shockwave.Name = "HealShockwave"
-            shockwave.Size = Vector3.new(0.1, 0.1, 0.1)
-            shockwave.Position = projectile.Position
-            shockwave.Anchored = true
-            shockwave.CanCollide = false
-            shockwave.Shape = Enum.PartType.Ball
-            shockwave.Material = Enum.Material.ForceField
-            shockwave.Color = Config.PROJECTILE_COLOR
-            shockwave.Transparency = 0.7
-            shockwave.Parent = workspace
-            
-            -- Animate impact effects with staggered timing
-            local TweenService = game:GetService("TweenService")
-            
-            -- Main heal effect expansion
-            local healTween = TweenService:Create(
-                healEffect,
-                TweenInfo.new(Config.EFFECT_CLEANUP_TIME, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-                {
-                    Size = Vector3.new(6, 6, 6),
-                    Transparency = 1
-                }
-            )
-            
-            -- Shockwave expansion
-            local shockwaveTween = TweenService:Create(
-                shockwave,
-                TweenInfo.new(Config.EFFECT_CLEANUP_TIME * 1.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-                {
-                    Size = Vector3.new(12, 12, 12),
-                    Transparency = 1
-                }
-            )
-            
-            -- Light fade animation
-            local lightTween = TweenService:Create(
-                healLight,
-                TweenInfo.new(Config.EFFECT_CLEANUP_TIME * 0.8, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-                {
-                    Brightness = 0,
-                    Range = 0
-                }
-            )
-            
-            -- Play all animations
-            healTween:Play()
-            shockwaveTween:Play()
-            lightTween:Play()
-            
-            -- Clean up with proper timing
-            Debris:AddItem(healEffect, Config.EFFECT_CLEANUP_TIME)
-            Debris:AddItem(shockwave, Config.EFFECT_CLEANUP_TIME * 1.2)
+            -- Don't add any extra effects - the asset handles everything
             Debris:AddItem(projectile, 0.1)
         end
     end)
@@ -353,34 +204,9 @@ local function playCharacterAnimation(animationName: string, targetPosition: Vec
         animationTrack:Play(Config.ANIM_FADE_TIME)
         
         -- Fire projectile on animation event or midway through animation
-        local fireTime = animationTrack.Length * 0.35 -- Fire at40% through animation
+        local fireTime = animationTrack.Length * 0.5 -- Fire at 35% through animation
         task.delay(fireTime, function()
-            local wand = character:FindFirstChild("Wand..")
-            if not wand or not wand:FindFirstChild("Part") then 
-                warn("Wand not found for player:", Players.LocalPlayer.Name)
-                return 
-            end
-
-            local startPos = wand.Part.Position
-            
-            -- Create the projectile
-            local projectile = effectsFolder.CastHeal:Clone()
-            projectile.CanCollide = false
-            projectile.Anchored = true
-            projectile.CFrame = CFrame.lookAt(startPos, targetPosition :: Vector3)
-            projectile:SetAttribute("CasterId", Players.LocalPlayer.UserId)
-            projectile.Parent = workspace
-            task.spawn(function()
-                for _, emitter in projectile:GetDescendants() do
-                    if emitter:IsA("ParticleEmitter") then
-                        emitter:Emit(5)
-                    end
-                end
-            end)
-
-            CameraShakeManager.Explosion(startPos, 15, 1)
-
-            Debris:AddItem(projectile, .25)
+            -- Just execute the attack - it will use assets
             executeAttack(tick(), targetPosition)
         end)
 
@@ -391,45 +217,14 @@ local function playCharacterAnimation(animationName: string, targetPosition: Vec
     end
 end
 
--- Enhanced camera shake effect for better feedback
-local function applyCameraShake(intensity: number?)
-    local shakeIntensity = intensity or 0.8
-    local character = Player.Character
-    if not character then return end
-    
-    local camera = workspace.CurrentCamera
-    if not camera then return end
-    
-    -- Simple camera shake implementation
-    task.spawn(function()
-        local originalCFrame = camera.CFrame
-        local shakeTime = 0.3
-        local startTime = tick()
-        
-        while tick() - startTime < shakeTime do
-            local elapsed = tick() - startTime
-            local progress = elapsed / shakeTime
-            local fade = 1 - progress
-            
-            -- Generate random shake values
-            local shakeX = (math.random() - 0.5) * shakeIntensity * fade
-            local shakeY = (math.random() - 0.5) * shakeIntensity * fade
-            local shakeZ = (math.random() - 0.5) * shakeIntensity * fade
-            
-            -- Apply shake to camera
-            local shakeOffset = Vector3.new(shakeX, shakeY, shakeZ)
-            camera.CFrame = camera.CFrame + shakeOffset
-            
-            game:GetService("RunService").Heartbeat:Wait()
-        end
-    end)
-end
 
 -- Main execution function called by CategoryHandler
 function Client.Execute(context: Types.SharedAbilityContext)
-    -- Call the OnCast function for backward compatibility
+    -- Execute visual effects immediately
+    -- Resource management is now handled by CategorySystem automatically
     Client.OnCast(context, nil)
     
+    -- Return success (let server validate)
     return {
         success = true,
         message = "RemM1 executed"
@@ -437,7 +232,7 @@ function Client.Execute(context: Types.SharedAbilityContext)
 end
 
 -- Validation function
-function Client.Validate(context: Types.SharedAbilityContext): Types.ValidationResult
+function Client.Validate(context: Types.SharedAbilityContext) : {success: boolean, reason: string?}
     local character = Player.Character
     if not character then
         return {
@@ -455,14 +250,18 @@ function Client.Validate(context: Types.SharedAbilityContext): Types.ValidationR
     end
     
     return {
-        success = true
+        success = true,
     }
 end
 
 -- Primary ability execution - called by CategoryHandler for Primary abilities
 function Client.OnCast(ctx: Types.SharedAbilityContext, serverData: any?)
-    -- Local client: play animation, projectile will spawn precisely during animation
+    print("[RemM1] OnCast called with context:", ctx)
+    -- Local client: execute immediately for now (animation system can be added later)
     local targetPosition = ctx.inputData.target
+    print("[RemM1] Target position:", targetPosition)
+    
+    -- Don't execute attack here - let animation handle it
     
     -- Enhanced cast sound effect with pitch variation
     local castSound = Instance.new("Sound")
@@ -473,58 +272,9 @@ function Client.OnCast(ctx: Types.SharedAbilityContext, serverData: any?)
     castSound:Play()
     castSound.Ended:Connect(function() castSound:Destroy() end)
     
-    -- Create casting circle effect at player position
-    local character = Player.Character
-    if character and character:FindFirstChild("HumanoidRootPart") then
-        local humanoidRootPart = character.HumanoidRootPart
-        
-        -- Create casting circle
-        local castingCircle = Instance.new("Part")
-        castingCircle.Name = "CastingCircle"
-        castingCircle.Size = Vector3.new(0.1, 0.1, 6)
-        castingCircle.Shape = Enum.PartType.Cylinder
-        castingCircle.Material = Enum.Material.Neon
-        castingCircle.Color = Config.PROJECTILE_COLOR
-        castingCircle.Anchored = true
-        castingCircle.CanCollide = false
-        castingCircle.Transparency = 0.3
-        castingCircle.CFrame = CFrame.new(humanoidRootPart.Position - Vector3.new(0, 2.8, 0)) * CFrame.Angles(0, 0, math.rad(90))
-        castingCircle.Parent = workspace
-        
-        -- Add glow to casting circle
-        local circleLight = Instance.new("PointLight")
-        circleLight.Brightness = Config.LIGHT_BRIGHTNESS * 0.5
-        circleLight.Range = Config.LIGHT_RANGE
-        circleLight.Color = Config.PROJECTILE_COLOR
-        circleLight.Parent = castingCircle
-        
-        -- Animate casting circle
-        local TweenService = game:GetService("TweenService")
-        local expandTween = TweenService:Create(
-            castingCircle,
-            TweenInfo.new(0.6, Enum.EasingStyle.Sine, Enum.EasingDirection.Out),
-            {
-                Size = Vector3.new(0.1, 0.1, 8),
-                Transparency = 0.8
-            }
-        )
-        
-        local fadeOutTween = TweenService:Create(
-            castingCircle,
-            TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-            {Transparency = 1}
-        )
-        
-        expandTween:Play()
-        expandTween.Completed:Connect(function()
-            fadeOutTween:Play()
-            fadeOutTween.Completed:Connect(function()
-                castingCircle:Destroy()
-            end)
-        end)
-    end
+    -- Don't create casting circle - use only assets
     
-    -- Execute the ability
+    -- Execute animation which will handle the attack
     task.spawn(playCharacterAnimation, Config.ANIMATION_NAME, targetPosition)
 end
 
@@ -562,6 +312,47 @@ end
 -- Category getter - used by CategoryHandler to route to appropriate method
 function Client.getAbilityCategory()
     return Config.ABILITY_CATEGORY
+end
+
+-- Handle server confirmation of successful cast
+function Client.OnServerConfirm(castId: number, serverData: any?)
+    if pendingCasts[castId] then
+        pendingCasts[castId] = nil
+        -- Tracker reference removed, handle confirmation as needed
+    end
+end
+
+-- Handle server rejection - rollback and cancel effects
+function Client.OnServerReject(castId: number, reason: string?)
+    if pendingCasts[castId] then
+        pendingCasts[castId] = nil
+        -- Tracker reference removed, handle rejection as needed
+        
+        -- Cancel any ongoing visual effects
+        -- This could include stopping particles, sounds, etc.
+        warn(`[RemM1] Server rejected cast: {reason or "Unknown reason"}`)
+        
+        -- TODO: Add visual feedback for rejection (e.g., red flash, error sound)
+    end
+end
+
+-- Get current ability status for UI (now handled by CategorySystem)
+function Client.GetAbilityStatus()
+    -- Status is now managed by CategorySystem automatically
+    -- UI should read directly from ClientCategoryHandler.GetResourceDisplay()
+    return {
+        text = "SEE_CATEGORY_SYSTEM",
+        progress = 1,
+        isReady = true,
+        resourceType = "ammo"
+    }
+end
+
+-- Manual reload function (for 'R' key press) - now handled by CategorySystem
+function Client.RequestReload()
+    -- Reload is now handled automatically by CategorySystem
+    -- when ClientCategoryHandler.ForceReload() is called
+    return true
 end
 
 return Client

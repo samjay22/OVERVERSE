@@ -139,7 +139,6 @@ local Client : Types.ClientAbility = {
         task.spawn(executeAttack, ctx and ctx.timestamp, targetPosition)
     end,
     OnCast = function(ctx: SharedAbilityContext, serverData: any?)
-        print("[RemE] OnCast called with target:", ctx.inputData.target)
         -- Local client: play animation which will trigger attack at precise timing
         local targetPosition = ctx.inputData.target
         local animationName : string = Configs.ANIMATION
@@ -189,7 +188,6 @@ local Client : Types.ClientAbility = {
 
 -- Helper function to create and animate projectile
 function executeAttack(castTimestamp: number?, targetPosition: Vector3?)
-    print("[RemE] executeAttack called with target:", targetPosition)
     if not targetPosition then
         warn("No target position provided")
         return
@@ -213,34 +211,15 @@ function executeAttack(castTimestamp: number?, targetPosition: Vector3?)
     local distance = (endPos - startPos).Magnitude
     
     -- Create the projectile
-    local projectile
-    local usingAsset = false
-    
-    if Assets and Assets:FindFirstChild("SmokeProjectile") then
-        print("[RemE] Using SmokeProjectile from assets")
-        projectile = Assets.SmokeProjectile:Clone()
-        projectile.CanCollide = false
-        projectile.Anchored = true
-        usingAsset = true
-    else
-        print("[RemE] Creating fallback projectile")
-        -- Create fallback projectile
-        projectile = Instance.new("Part")
-        projectile.Name = "RemE_Projectile"
-        projectile.Size = Vector3.new(2, 2, 2)
-        projectile.Shape = Enum.PartType.Ball
-        projectile.Material = Enum.Material.Neon
-        projectile.Color = Color3.fromRGB(150, 100, 200) -- Purple smoke color
-        projectile.CanCollide = false
-        projectile.Anchored = true
-    end
-    
+    local projectile = Assets.SmokeProjectile:Clone()
+    projectile.CanCollide = false
+    projectile.Anchored = true
     projectile.CFrame = CFrame.lookAt(startPos, endPos)
     projectile:SetAttribute("CasterId", Players.LocalPlayer.UserId)
     projectile.Parent = workspace
     
-    -- Add initial visual effects (if using asset)
-    if usingAsset and projectile:FindFirstChild("Attachment") then
+    -- Add initial visual effects
+    if projectile:FindFirstChild("Attachment") then
         for _, effect in pairs(projectile:GetDescendants()) do
             if effect:IsA("ParticleEmitter") then
                 effect:Emit(5)
@@ -248,10 +227,8 @@ function executeAttack(castTimestamp: number?, targetPosition: Vector3?)
         end
     end
     
-    -- Calculate travel time with minimum for visual consistency
-    local baseTime = distance / Configs.PROJECTILE_SPEED
-    local minTime = 0.3 -- Minimum travel time
-    local travelTime = math.max(baseTime, minTime)
+    -- Calculate travel time and animation
+    local travelTime = distance / Configs.PROJECTILE_SPEED
     local startTime = time()
     
     -- Handle latency compensation for replication
@@ -284,24 +261,9 @@ function executeAttack(castTimestamp: number?, targetPosition: Vector3?)
                 projectile.CFrame = CFrame.new(endPos)
                 
                 -- Create impact effect
-                local impactEffect
-                if Assets and Assets:FindFirstChild("SmokeHit") then
-                    print("[RemE] Using SmokeHit from assets")
-                    impactEffect = Assets.SmokeHit:Clone()
-                    impactEffect.CFrame = CFrame.new(endPos)
-                    impactEffect.Parent = workspace
-                else
-                    print("[RemE] Creating fallback impact effect")
-                    -- Create fallback impact
-                    impactEffect = Instance.new("Part")
-                    impactEffect.Name = "RemE_Impact"
-                    impactEffect.Size = Vector3.new(0.1, 0.1, 0.1)
-                    impactEffect.Anchored = true
-                    impactEffect.CanCollide = false
-                    impactEffect.Transparency = 1
-                    impactEffect.CFrame = CFrame.new(endPos)
-                    impactEffect.Parent = workspace
-                end
+                local impactEffect = Assets.SmokeHit:Clone()
+                impactEffect.CFrame = CFrame.new(endPos)
+                impactEffect.Parent = workspace
                 
                 -- Create damage indicator (similar to heal indicator)
                 -- Check for any target that might have been hit at this position
@@ -371,7 +333,22 @@ function executeAttack(castTimestamp: number?, targetPosition: Vector3?)
                 Debris:AddItem(temp, 2.5)
                 Debris:AddItem(damageIndicator, 2.5)
                 
-                -- Let the assets handle their own particles
+                -- Stop movement particles and start impact particles
+                if projectile:FindFirstChild("Attachment") then
+                    for _, effect in pairs(projectile:GetDescendants()) do
+                        if effect:IsA("ParticleEmitter") then
+                            effect:Emit(10)
+                        end
+                    end
+                end
+                
+                if impactEffect:FindFirstChild("Attachment") then
+                    for _, effect in pairs(impactEffect:GetDescendants()) do
+                        if effect:IsA("ParticleEmitter") then
+                            effect:Emit(10)
+                        end
+                    end
+                end
                 
                 -- Clean up
                 Debris:AddItem(projectile, 0.1)

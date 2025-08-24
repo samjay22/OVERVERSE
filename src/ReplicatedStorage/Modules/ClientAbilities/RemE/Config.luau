@@ -1,9 +1,10 @@
 local Config = {
     REQUIRES_TARGET = true,
-    ATTACK_RANGE = 75,
+    ATTACK_RANGE = 150,
     ABILITY_CATEGORY = "Active",
-    COOLDOWN_TIME = 1.5,
-    DAMAGE = 25,
+    COOLDOWN_TIME = 12.0, -- 12 second cooldown for smoke
+    FIRE_RATE = 0.5, -- Minimum time between casts (prevent spam)
+    DAMAGE = 0, -- Smoke doesn't do damage
     ANIMATION = "M1",
     PROJECTILE_SPEED = 100,
 }

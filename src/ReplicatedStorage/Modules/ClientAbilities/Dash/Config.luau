@@ -63,9 +63,8 @@ local Config: {
     
     -- Dash ability configuration
     ATTACK_RANGE = 50, -- Dash distance
-    MAX_AMMO = 1, -- Single use
-    RELOAD_TIME = 3.0, -- 3 second cooldown
-    COOLDOWN_TIME = 3.0, -- 3 second cooldown (duplicate for compatibility)
+    COOLDOWN_TIME = 5.0, -- Cooldown per charge
+    FIRE_RATE = 0.2, -- Minimum time between dashes (prevent spam)
     
     -- Audio Configuration
     SOUND_CAST_ID = "rbxasset://sounds/electronicpingshort.wav", -- Default Roblox sound

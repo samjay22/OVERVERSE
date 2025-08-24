@@ -1,183 +1,220 @@
 --!strict
--- Abstract client-side category handler with strict typing
+-- ClientCategoryHandler: Integrates with centralized state management
+-- Uses ClientAbilityStateManager and AbilityCategoryRegistry for all operations
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
 
 local Types = require(ReplicatedStorage.Modules.Types.ClientAbilityTypes)
-local CategorySystem = require(ReplicatedStorage.Modules.Utility.CategorySystem)
+local ClientAbilityStateManager = require(script.Parent.ClientAbilityStateManager)
+local AbilityCategoryRegistry = require(script.Parent.AbilityCategoryRegistry)
+local CategorySystem = require(script.Parent.CategorySystem)
 
 type SharedAbilityContext = Types.SharedAbilityContext
 type ClientAbility = Types.ClientAbility
 type AbilityCategory = Types.AbilityCategory
-type ResourceState = CategorySystem.ResourceState
-type ResourceConfig = CategorySystem.ResourceConfig
+type AbilityConfig = Types.AbilityConfig
+type ResourceState = ClientAbilityStateManager.ResourceState
 
--- Abstract resource manager interface
-type ResourceManager = {
-    states: { [string]: ResourceState },
-    getState: (self: ResourceManager, id: string, category: AbilityCategory, config: ResourceConfig) -> ResourceState,
-    consumeResource: (self: ResourceManager, id: string, category: AbilityCategory, config: ResourceConfig) -> ResourceState,
-    canUse: (self: ResourceManager, id: string, category: AbilityCategory, config: ResourceConfig) -> boolean,
-    forceReload: (self: ResourceManager, id: string, category: AbilityCategory, config: ResourceConfig) -> boolean,
+export type ResourceDisplay = {
+    resourceType: "ammo" | "cooldown" | "passive",
+    ready: boolean,
+    
+    -- Ammo display
+    currentAmmo: number?,
+    maxAmmo: number?,
+    reloading: boolean?,
+    reloadProgress: number?,
+    
+    -- Cooldown display
+    cooldownRemaining: number?,
+    cooldownTotal: number?,
 }
 
--- Create resource manager with closure
-local function createResourceManager(): ResourceManager
-    local manager = {} :: ResourceManager
-    manager.states = {}
-    
-    function manager:getState(id: string, category: AbilityCategory, config: ResourceConfig): ResourceState
-        if not self.states[id] then
-            self.states[id] = CategorySystem.InitializeResourceState(category, id, config)
-        end
-        
-        -- Auto-update reload state for ammo abilities
-        if CategorySystem.UsesAmmo(category) and self.states[id].reloading then
-            self.states[id] = CategorySystem.UpdateReload(self.states[id], config)
-        end
-        
-        return self.states[id]
-    end
-    
-    function manager:consumeResource(id: string, category: AbilityCategory, config: ResourceConfig): ResourceState
-        local state = self:getState(id, category, config)
-        local newState = CategorySystem.ConsumeResources(category, state, config)
-        self.states[id] = newState
-        return newState
-    end
-    
-    function manager:canUse(id: string, category: AbilityCategory, config: ResourceConfig): boolean
-        local state = self:getState(id, category, config)
-        return CategorySystem.CanUseAbility(category, state, config)
-    end
-    
-    function manager:forceReload(id: string, category: AbilityCategory, config: ResourceConfig): boolean
-        if not CategorySystem.CanForceReload(category) then
-            return false
-        end
-        
-        local state = self:getState(id, category, config)
-        self.states[id] = CategorySystem.ForceReload(category, state, config)
-        return true
-    end
-    
-    return manager
-end
-
-local resourceManager = createResourceManager()
-
--- Abstract execution pipeline
-local function executeAbilityPipeline(
-    abilityModule: ClientAbility,
-    context: SharedAbilityContext,
-    category: AbilityCategory
-): ()
-    local sharedModule = abilityModule.GetSharedModule()
-    local config = sharedModule.GetConfig()
-    local abilityId = tostring(context.abilityId)
-    
-    -- Check resources
-    if not resourceManager:canUse(abilityId, category, config) then
-        warn(`[{category}] Cannot execute - resources unavailable`)
-        return
-    end
-    
-    -- Execute ability with error handling
-    local success, err = pcall(function()
-        if abilityModule.OnCast then
-            -- Set ability state for UI/other systems
-            if CategorySystem.UsesCooldown(category) or CategorySystem.UsesAmmo(category) then
-                Players.LocalPlayer:SetAttribute("UsingAbility", true)
-                task.defer(function()
-                    Players.LocalPlayer:SetAttribute("UsingAbility", false)
-                end)
-            end
-            
-            abilityModule.OnCast(context)
-        end
-    end)
-    
-    if not success then
-        warn(`[{category}] Execution failed: {err}`)
-        return
-    end
-    
-    -- Consume resources on successful execution
-    resourceManager:consumeResource(abilityId, category, config)
-end
-
--- Public interface with strict typing
 export type ClientCategoryHandler = {
     ExecuteAbility: (abilityModule: ClientAbility, context: SharedAbilityContext) -> (),
-    GetResourceDisplay: (abilityId: string, category: AbilityCategory, config: ResourceConfig) -> CategorySystem.ResourceDisplay,
-    ForceReload: (abilityId: string, category: AbilityCategory, config: ResourceConfig) -> boolean,
+    GetResourceDisplay: (abilityId: string, category: AbilityCategory, config: AbilityConfig) -> ResourceDisplay,
+    ForceReload: (abilityId: string, category: AbilityCategory, config: AbilityConfig) -> boolean,
+    IsReady: (abilityId: string) -> boolean,
+    GetState: (abilityId: string) -> ResourceState?,
 }
 
-local ClientCategoryHandler: ClientCategoryHandler = {} :: ClientCategoryHandler
+local ClientCategoryHandler = {} :: ClientCategoryHandler
 
-function ClientCategoryHandler.ExecuteAbility(abilityModule: ClientAbility, context: SharedAbilityContext): ()
-    local sharedModule = abilityModule.GetSharedModule()
-    local config = sharedModule.GetConfig()
-    local category: AbilityCategory = config.ABILITY_CATEGORY
+-- Get singleton instances
+local stateManager = ClientAbilityStateManager.GetInstance()
+local registry = AbilityCategoryRegistry.GetInstance()
+
+-- Numeric to string ID mapping (must match AbilityPredictor)
+local NUMERIC_TO_STRING_MAP: {[number]: string} = {
+    [1] = "RemM1",
+    [2] = "RemM2", 
+    [3] = "Dash",
+    [4] = "RemE",
+    -- [5] = "RemR", -- Not implemented
+    -- [6] = "RemT", -- Not implemented
+    [7] = "RemF",
+}
+
+function ClientCategoryHandler.ExecuteAbility(abilityModule: ClientAbility, context: SharedAbilityContext)
+    print(`[ClientCategoryHandler] ExecuteAbility called with ID: {context.abilityId}`)
     
-    executeAbilityPipeline(abilityModule, context, category)
+    -- Convert numeric ID to string ID
+    local stringAbilityId = NUMERIC_TO_STRING_MAP[context.abilityId]
+    if not stringAbilityId then
+        stringAbilityId = tostring(context.abilityId)
+        warn(`[ClientCategoryHandler] Unknown numeric ability ID: {context.abilityId}`)
+    end
+    
+    print(`[ClientCategoryHandler] String ID: {stringAbilityId}`)
+    
+    -- Get ability registration
+    local registration = registry:GetAbility(stringAbilityId)
+    if not registration then
+        -- Try to register on the fly
+        local sharedModule = abilityModule.GetSharedModule()
+        local config = sharedModule.GetConfig()
+        registry:RegisterAbility(stringAbilityId, config, abilityModule)
+        registration = registry:GetAbility(stringAbilityId)
+        
+        if not registration then
+            warn(`[ClientCategoryHandler] Failed to register ability {stringAbilityId}`)
+            return
+        end
+    end
+    
+    -- AbilityPredictor already checked IsReady and called UseAbility
+    -- We don't need to check again here as it would fail after resource consumption
+    
+    -- Get category definition for validation
+    local categoryDef = registry:GetCategory(registration.category)
+    if categoryDef and categoryDef.validator then
+        local isValid, reason = categoryDef.validator(context)
+        if not isValid then
+            warn(`[ClientCategoryHandler] Validation failed for {stringAbilityId}: {reason}`)
+            return
+        end
+    end
+    
+    -- Execute ability (resource already consumed by AbilityPredictor)
+    print(`[ClientCategoryHandler] About to execute ability {stringAbilityId}`)
+    print(`[ClientCategoryHandler] Has OnCast: {abilityModule.OnCast ~= nil}, Has Execute: {abilityModule.Execute ~= nil}`)
+    if abilityModule.OnCast then
+        print(`[ClientCategoryHandler] Calling OnCast for {stringAbilityId}`)
+        -- Set using ability attribute for other systems
+        Players.LocalPlayer:SetAttribute("UsingAbility", true)
+        task.defer(function()
+            Players.LocalPlayer:SetAttribute("UsingAbility", false)
+        end)
+        
+        abilityModule.OnCast(context)
+        print(`[ClientCategoryHandler] OnCast completed for {stringAbilityId}`)
+    else
+        warn(`[ClientCategoryHandler] No OnCast or Execute method for {stringAbilityId}`)
+    end
 end
 
 function ClientCategoryHandler.GetResourceDisplay(
     abilityId: string,
     category: AbilityCategory,
-    config: ResourceConfig
-): CategorySystem.ResourceDisplay
-    local state = resourceManager:getState(abilityId, category, config)
-    return CategorySystem.GetResourceDisplay(category, state, config)
+    config: AbilityConfig
+): ResourceDisplay
+    -- Ensure ability is registered
+    local registration = registry:GetAbility(abilityId)
+    if not registration then
+        registry:RegisterAbility(abilityId, config, nil)
+    end
+    
+    -- Get current state
+    local state = stateManager:GetAbilityState(abilityId)
+    if not state then
+        return {
+            resourceType = "cooldown",
+            ready = false,
+        }
+    end
+    
+    local display: ResourceDisplay = {
+        resourceType = state.resourceType,
+        ready = state.ready,
+    }
+    
+    -- Add resource-specific fields
+    if state.resourceType == "ammo" then
+        display.currentAmmo = state.currentAmmo
+        display.maxAmmo = state.maxAmmo
+        display.reloading = state.reloading
+        
+        if state.reloading then
+            display.reloadProgress = stateManager:GetReloadProgress(abilityId)
+        end
+        
+    elseif state.resourceType == "cooldown" then
+        local remaining = stateManager:GetRemainingCooldown(abilityId)
+        display.cooldownRemaining = remaining
+        display.cooldownTotal = state.cooldownDuration
+    end
+    
+    return display
 end
 
 function ClientCategoryHandler.ForceReload(
     abilityId: string,
     category: AbilityCategory,
-    config: ResourceConfig
+    config: AbilityConfig
 ): boolean
-    return resourceManager:forceReload(abilityId, category, config)
-end
-
--- Auto-update resources every frame
-RunService.Heartbeat:Connect(function()
-    for id, state in pairs(resourceManager.states) do
-        if state.reloading then
-            -- Updates happen automatically in getState
-            resourceManager:getState(id, state.category, {
-                RELOAD_TIME = 2.0, -- Default, should come from config
-                ABILITY_CATEGORY = state.category,
-            } :: ResourceConfig)
-        end
+    -- Only Primary abilities can be reloaded
+    if category ~= "Primary" then
+        return false
     end
+    
+    -- Ensure ability is registered
+    local registration = registry:GetAbility(abilityId)
+    if not registration then
+        registry:RegisterAbility(abilityId, config, nil)
+    end
+    
+    -- Start reload
+    stateManager:StartReload(abilityId)
+    return true
+end
+
+function ClientCategoryHandler.IsReady(abilityId: string): boolean
+    return stateManager:IsReady(abilityId)
+end
+
+function ClientCategoryHandler.GetState(abilityId: string): ResourceState?
+    return stateManager:GetAbilityState(abilityId)
+end
+
+-- Legacy compatibility methods (delegate to main method)
+function ClientCategoryHandler.ExecutePrimary(abilityModule: ClientAbility, context: SharedAbilityContext)
+    ClientCategoryHandler.ExecuteAbility(abilityModule, context)
+end
+
+function ClientCategoryHandler.ExecuteActive(abilityModule: ClientAbility, context: SharedAbilityContext)
+    ClientCategoryHandler.ExecuteAbility(abilityModule, context)
+end
+
+function ClientCategoryHandler.ExecutePassive(abilityModule: ClientAbility, context: SharedAbilityContext)
+    ClientCategoryHandler.ExecuteAbility(abilityModule, context)
+end
+
+function ClientCategoryHandler.ExecuteSecondary(abilityModule: ClientAbility, context: SharedAbilityContext)
+    ClientCategoryHandler.ExecuteAbility(abilityModule, context)
+end
+
+function ClientCategoryHandler.ExecuteUltimate(abilityModule: ClientAbility, context: SharedAbilityContext)
+    ClientCategoryHandler.ExecuteAbility(abilityModule, context)
+end
+
+function ClientCategoryHandler.UpdateResources()
+    -- Resources update automatically via ClientAbilityStateManager
+end
+
+-- Start auto-discovery when module loads
+task.defer(function()
+    registry:StartAutoDiscovery(3)
 end)
-
--- Legacy compatibility methods
-function ClientCategoryHandler.ExecutePrimary(abilityModule: ClientAbility, context: SharedAbilityContext): ()
-    executeAbilityPipeline(abilityModule, context, "Primary")
-end
-
-function ClientCategoryHandler.ExecuteActive(abilityModule: ClientAbility, context: SharedAbilityContext): ()
-    executeAbilityPipeline(abilityModule, context, "Active")
-end
-
-function ClientCategoryHandler.ExecutePassive(abilityModule: ClientAbility, context: SharedAbilityContext): ()
-    executeAbilityPipeline(abilityModule, context, "Passive")
-end
-
-function ClientCategoryHandler.ExecuteSecondary(abilityModule: ClientAbility, context: SharedAbilityContext): ()
-    executeAbilityPipeline(abilityModule, context, "Secondary")
-end
-
-function ClientCategoryHandler.ExecuteUltimate(abilityModule: ClientAbility, context: SharedAbilityContext): ()
-    executeAbilityPipeline(abilityModule, context, "Ultimate")
-end
-
-function ClientCategoryHandler.UpdateResources(): ()
-    -- This method is called by external systems but updates happen automatically
-end
 
 return ClientCategoryHandler

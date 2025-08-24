@@ -26,9 +26,12 @@ local Config: {
     ABILITY_CATEGORY: Types.AbilityCategory,
 
     -- Primary ability uses ammo system instead of cooldown
+    -- AMMO SYSTEM PROPERTIES (Primary abilities only)
     ATTACK_RANGE: number,
     MAX_AMMO: number,
+    CURRENT_AMMO: number?, -- Will be tracked at runtime
     RELOAD_TIME: number,
+    FIRE_RATE: number, -- Time between shots (replaces COOLDOWN_TIME for ammo abilities)
     
     -- Audio Configuration
     SOUND_CAST_ID: string,
@@ -50,7 +53,7 @@ local Config: {
     -- Projectile Constants
     PROJECTILE_SPEED = 75, -- Slightly faster for responsiveness
     SPIRAL_RADIUS = 2, -- Tighter spiral for precision
-    SPIRAL_FREQUENCY = 8, -- More spiral rotations for visual appeal
+    SPIRAL_FREQUENCY = 3, -- More spiral rotations for visual appeal
     PROJECTILE_SIZE = Vector3.new(0.4, 0.4, 0.4), -- Slightly larger
     PROJECTILE_COLOR = Color3.new(0.15, 1, 0.4), -- More vibrant healing color
 
@@ -61,11 +64,12 @@ local Config: {
     PARTICLE_RATE = 40, -- More particles for better visibility
     ABILITY_CATEGORY = "Primary",
     
-    -- Primary ability resource system (ammo instead of cooldown)
-    ATTACK_RANGE = 120, -- Increased range for better utility
-    MAX_AMMO = 6, -- 6 healing shots before reload
-    RELOAD_TIME = 5, -- 2.5 second reload time
-    COOLDOWN_TIME = 1.6, -- Cooldown between shots
+    -- AMMO SYSTEM (Primary abilities use ammo instead of cooldowns)
+    ATTACK_RANGE = 120, -- Maximum range for ability
+    MAX_AMMO = 6, -- Maximum shots before needing to reload
+    CURRENT_AMMO = nil, -- Tracked at runtime, not in config
+    RELOAD_TIME = 5, -- Time to fully reload all ammo (seconds)
+    FIRE_RATE = 0.5, -- Minimum time between shots (seconds) - faster than cooldown abilities!
     
     -- Audio Configuration
     SOUND_CAST_ID = "rbxasset://sounds/electronicpingshort.wav", -- Default Roblox sound

@@ -1,5 +1,5 @@
 --!strict
--- RemM1 Server Module - Primary Category Ability
+-- RemM2 Server Module - Primary Category Ability
 -- Rewritten to work with category-based execution system
 
 local Players = game:GetService("Players")

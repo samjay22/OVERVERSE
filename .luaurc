@@ -113,6 +113,14 @@
 		"CameraController": "./src/StarterPlayerScripts/CameraController.client.luau",
 		"MouseController": "./src/StarterPlayerScripts/MouseController.client.luau",
 		"MovementAnimationHandler": "./src/StarterPlayerScripts/MovementAnimationHandler.client.luau",
-		"PassiveAbilityManager": "./src/StarterPlayerScripts/PassiveAbilityManager.client.luau"
+		"PassiveAbilityManager": "./src/StarterPlayerScripts/PassiveAbilityManager.client.luau",
+		"ClientAbilityStateManager": "./src/ReplicatedStorage/Modules/Utility/ClientAbilityStateManager.luau",
+		"AbilityCategoryRegistry": "./src/ReplicatedStorage/Modules/Utility/AbilityCategoryRegistry.luau",
+		"AbilityConfiguration": "./src/ReplicatedStorage/Modules/Configuration/AbilityConfiguration.luau",
+		"InputConfiguration": "./src/ReplicatedStorage/Modules/Configuration/InputConfiguration.luau",
+		"ResourceTypes": "./src/ReplicatedStorage/Modules/Configuration/ResourceTypes.luau",
+		"UIThemes": "./src/ReplicatedStorage/Modules/Configuration/UIThemes.luau",
+		"InitializeAbilities": "./src/StarterPlayerScripts/InitializeAbilities.client.luau",
+		"AbilityFactory": "./src/ReplicatedStorage/Modules/Configuration/AbilityFactory.luau"
 	}
 }

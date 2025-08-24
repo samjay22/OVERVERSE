@@ -30,6 +30,91 @@ end
 
 local Server = {}
 
+-- AMMO TRACKING SYSTEM
+-- Primary abilities (like RemM1) use ammo instead of cooldowns
+-- This provides a different gameplay feel - rapid shots with reload periods
+local ammoTracker: {[number]: {currentAmmo: number, lastFireTime: number, isReloading: boolean, reloadStartTime: number?}} = {}
+
+-- Initialize ammo for a player/entity
+local function initializeAmmo(playerId: number)
+    if not ammoTracker[playerId] then
+        ammoTracker[playerId] = {
+            currentAmmo = Config.MAX_AMMO,
+            lastFireTime = 0,
+            isReloading = false,
+            reloadStartTime = nil
+        }
+    end
+end
+
+-- Check and update ammo status
+local function checkAmmoStatus(playerId: number): (boolean, string?)
+    initializeAmmo(playerId)
+    local tracker = ammoTracker[playerId]
+    local currentTime = tick()
+    
+    -- Check if currently reloading
+    if tracker.isReloading and tracker.reloadStartTime then
+        local reloadElapsed = currentTime - tracker.reloadStartTime
+        if reloadElapsed >= Config.RELOAD_TIME then
+            -- Reload complete
+            tracker.currentAmmo = Config.MAX_AMMO
+            tracker.isReloading = false
+            tracker.reloadStartTime = nil
+        else
+            -- Still reloading
+            local timeLeft = Config.RELOAD_TIME - reloadElapsed
+            return false, string.format("Reloading... %.1fs remaining", timeLeft)
+        end
+    end
+    
+    -- Check fire rate (time between shots)
+    local timeSinceLastFire = currentTime - tracker.lastFireTime
+    if timeSinceLastFire < Config.FIRE_RATE then
+        local waitTime = Config.FIRE_RATE - timeSinceLastFire
+        return false, string.format("Fire rate limit - wait %.1fs", waitTime)
+    end
+    
+    -- Check if we have ammo
+    if tracker.currentAmmo <= 0 then
+        -- Start automatic reload
+        tracker.isReloading = true
+        tracker.reloadStartTime = currentTime
+        return false, string.format("Out of ammo! Reloading... %.1fs", Config.RELOAD_TIME)
+    end
+    
+    return true, nil
+end
+
+-- Consume ammo when firing
+local function consumeAmmo(playerId: number)
+    initializeAmmo(playerId)
+    local tracker = ammoTracker[playerId]
+    
+    tracker.currentAmmo = tracker.currentAmmo - 1
+    tracker.lastFireTime = tick()
+    
+    -- Auto-reload if out of ammo
+    if tracker.currentAmmo <= 0 then
+        tracker.isReloading = true
+        tracker.reloadStartTime = tick()
+    end
+    
+    return tracker.currentAmmo
+end
+
+-- Get current ammo status for UI
+local function getAmmoStatus(playerId: number): {current: number, max: number, reloading: boolean}
+    initializeAmmo(playerId)
+    local tracker = ammoTracker[playerId]
+    
+    return {
+        current = tracker.currentAmmo,
+        max = Config.MAX_AMMO,
+        reloading = tracker.isReloading
+    }
+end
+
 -- Helper function to get EntityRef from playerId (optimized with caching)
 local function getEntityFromPlayerId(playerId: number): EntityRef?
     -- Clean expired cache periodically
@@ -134,6 +219,15 @@ function Server.OnRequest(ctx: Types.SharedAbilityContext): Types.AbilityResult
         }
     end
     
+    -- AMMO CHECK (Primary abilities use ammo, not cooldowns!)
+    local canFire, ammoReason = checkAmmoStatus(ctx.playerId)
+    if not canFire then
+        return {
+            success = false,
+            reason = ammoReason or "Cannot fire",
+        }
+    end
+    
     -- Get target position from context
     local targetPosition = ctx.inputData.target
     if not targetPosition then
@@ -232,11 +326,44 @@ function Server.OnRequest(ctx: Types.SharedAbilityContext): Types.AbilityResult
         }
     end
     
-    -- Return success (no cooldown since Primary uses ammo system)
+    -- CONSUME AMMO (Primary abilities use ammo!)
+    local remainingAmmo = consumeAmmo(ctx.playerId)
+    local ammoStatus = getAmmoStatus(ctx.playerId)
+    
+    -- Return success with ammo status (NO COOLDOWNS for Primary abilities!)
     return {
         success = true,
-        -- No cooldowns returned since Primary abilities use ammo instead
+        -- Send ammo info for UI display
+        ammoStatus = {
+            current = ammoStatus.current,
+            max = ammoStatus.max,
+            reloading = ammoStatus.reloading,
+            category = "Primary" -- Mark this as ammo-based
+        }
     }
+end
+
+-- Manual reload function (can be called by pressing R or when out of ammo)
+function Server.ForceReload(playerId: number)
+    initializeAmmo(playerId)
+    local tracker = ammoTracker[playerId]
+    
+    -- Don't reload if already full or reloading
+    if tracker.currentAmmo >= Config.MAX_AMMO or tracker.isReloading then
+        return false
+    end
+    
+    -- Start reload
+    tracker.isReloading = true
+    tracker.reloadStartTime = tick()
+    
+    print(`[RemM1] Player {playerId} started manual reload`)
+    return true
+end
+
+-- Get ammo information for UI display
+function Server.GetAmmoInfo(playerId: number)
+    return getAmmoStatus(playerId)
 end
 
 -- Shared module accessor - required by CategoryHandler
