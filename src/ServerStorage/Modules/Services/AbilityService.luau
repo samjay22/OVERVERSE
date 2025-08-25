@@ -4,7 +4,9 @@ local ServerStorage = game:GetService("ServerStorage")
 
 local CombatComponent = require(game.ServerStorage.Modules.Components.CombatComponent)
 local AbilityTypes = require(game.ServerStorage.Modules.Types.AbilityTypes)
+local ClientAbilityTypes = require(game.ReplicatedStorage.Modules.Types.AbilityTypes)
 local Character = require(game.ServerStorage.Modules.Entities.Character)
+local Abilities = game.ReplicatedStorage.Modules.Abilities
 
 -- Type exports
 export type IAbilityService = AbilityTypes.IAbilityService
@@ -183,7 +185,16 @@ function AbilityService:M2(player: Player, isDown: boolean): boolean
 end
 
 function AbilityService:Activate(player: Player, abilityId: string, ctxExtra: {[string]: any}?): boolean
-    -- Server accepts request; validation happens elsewhere
+    if Character:GetCharacterState(player, "CastingAbility") then return false end
+    Character:SetCharacterState(player, "CastingAbility", true)
+
+    local class, ability = unpack(abilityId:split("-"))
+    print(class, ability)
+
+    local classAbilities : ClientAbilityTypes.AbilityModule = require(Abilities:FindFirstChild(class))[ability] :: any
+    classAbilities.Server:Validate(player)
+
+    Character:SetCharacterState(player, "CastingAbility", false)
     return true
 end
 
@@ -242,58 +253,7 @@ function AbilityService:SetLoadout(character: AbilityTypes.CharacterRef, newLoad
 end
 
 function AbilityService:_updateKeyBindings(character: AbilityTypes.CharacterRef, loadout: Loadout)
-    local binds = table.clone(DEFAULT_BINDINGS)
-    binds.Slots = {}
-    
-    for slot = 1, 4 do
-        local abilityId = loadout.actives[slot]
-        local entry = { numeric = table.clone(SLOT_TO_NUM_CODES[slot]) }
-        
-        if abilityId then
-            local clientMod = ClientAbilities.Get(abilityId)
-            if clientMod and typeof(clientMod.getAbilityInputRequired) == "function" then
-                local ok, input = pcall(clientMod.getAbilityInputRequired)
-                if ok and input then
-                    local customEntry = createBindingEntry(input)
-                    if #customEntry.numeric > 0 then
-                        -- Merge with default slot codes if applicable
-                        local mergedNums = table.clone(customEntry.numeric)
-                        local presentNums = {}
-                        
-                        for _, num in ipairs(mergedNums) do
-                            presentNums[num] = true
-                        end
-                        
-                        -- Add default slot codes if not already present
-                        for _, code in ipairs(SLOT_TO_NUM_CODES[slot]) do
-                            if not presentNums[code] then
-                                table.insert(mergedNums, code)
-                            end
-                        end
-                        
-                        entry.numeric = mergedNums
-                    end
-                end
-            end
-        end
-        
-        binds.Slots[slot] = entry
-    end
-    
-    character.StateManager:Set("KeyBindings", binds)
-end
-
--- **Passive Management**
-function AbilityService:_updatePassives(character: AbilityTypes.CharacterRef, oldPassive: AbilityId?, newPassive: AbilityId?)
-    if oldPassive == newPassive then return end
-    
-    if oldPassive then
-        self:_applyPassiveModifiers(character, oldPassive, false)
-    end
-    
-    if newPassive then
-        self:_applyPassiveModifiers(character, newPassive, true)
-    end
+   
 end
 
 function AbilityService:_applyPassiveModifiers(character: AbilityTypes.CharacterRef, passiveId: AbilityId, isEquipping: boolean)

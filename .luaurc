@@ -88,6 +88,7 @@
 		"CombatService": "./src/ServerStorage/Modules/Services/CombatService.luau",
 		"AbilityService": "./src/ServerStorage/Modules/Services/AbilityService.luau",
 		"InputHandler": "./src/StarterPlayerScripts/InputHandler.client.luau",
-		"AbilityManager": "./src/ServerScriptService/Scripts/AbilityManager.server.luau"
+		"AbilityManager": "./src/ServerScriptService/Scripts/AbilityManager.server.luau",
+		"AbilityInputHandler": "./src/ServerStorage/Modules/Handlers/AbilityInputHandler.luau"
 	}
 }

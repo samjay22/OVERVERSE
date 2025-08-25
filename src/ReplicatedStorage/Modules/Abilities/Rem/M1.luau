@@ -81,8 +81,8 @@ local Ability : Types.AbilityModule = {
     },
 
     Server = {
-        Validate = function(self, player)
-            
+        Validate = function(self, player, ctxExtra)
+            print(ctxExtra)
             return true
         end
     }

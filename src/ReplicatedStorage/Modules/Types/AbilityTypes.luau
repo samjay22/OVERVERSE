@@ -14,7 +14,7 @@ export type Client = {
 }
 
 export type Server = {
-    Validate : (self: Server, player: Player) -> boolean
+    Validate : (self: Server, player: Player, ctxExtra : {[string]: any}?) -> boolean
 }
 
 export type AbilityModule = {

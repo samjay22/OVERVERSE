@@ -7,6 +7,7 @@ for _, module in ipairs(script:GetChildren()) do
         local success, result : Types.AbilityModule = pcall(require, module)
         if success then
             loaded[result.Enum] = result
+            loaded[module.Name] = result
         else
             warn("Failed to load ability config from module:", module.Name, result)
         end

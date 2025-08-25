@@ -1,6 +1,11 @@
 --!strict
 -- Ability Component - wraps AbilityService
 
+local MockAbilityData : { [Enum.KeyCode | Enum.UserInputType] : string} = {
+    [Enum.KeyCode.E] = "RemE",
+    [Enum.UserInputType.MouseButton1] = "M1",
+    [Enum.UserInputType.MouseButton2] = "M2",
+}
 local AbilityService = require(game.ServerStorage.Modules.Services.AbilityService)
 local AbilityTypes = require(game.ServerStorage.Modules.Types.AbilityTypes)
 
@@ -14,6 +19,7 @@ function AbilityComponent.Initialize(characterData: AbilityTypes.CharacterRef, c
         [Enum.UserInputType.MouseButton1] = "M1",
         [Enum.UserInputType.MouseButton2] = "M2"
     }
+    characterData.StateManager:Set("KeyBindings", table.freeze(MockAbilityData))
     _service:Initialize(characterData, loadout)
 end
 
