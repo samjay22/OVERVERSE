@@ -14,10 +14,15 @@ export type Client = {
 }
 
 export type Server = {
-    Validate : (self: Server, player: Player, ctxExtra : {[string]: any}?) -> boolean
+    InternalState : {
+        [string] : any
+    },
+    Validate : (self: Server, player: Player, ctxExtra : {[string]: any}?) -> boolean,
+    OnUpdate : (self: Server, dt: number) -> boolean
 }
 
 export type AbilityModule = {
+    Name : string,
     Enum : Enum.KeyCode | Enum.UserInputType,
     Client : Client,
     Server : Server,

@@ -1,10 +1,12 @@
 --!strict
 -- ComponentManager - Handles component registration, initialization, and updates
 local CharacterTypes = require(game.ServerStorage.Modules.Types.CharacterTypes)
+local BaseComponent = require(game.ServerStorage.Modules.Components.BaseComponent)
 
 type ComponentInterface = CharacterTypes.ComponentInterface
 type internalCharacter = CharacterTypes.internalCharacter
 type CharacterConfig = CharacterTypes.CharacterConfig
+type BaseComponentType = BaseComponent.BaseComponent
 
 export type ComponentUpdater = {
 	name: string,
@@ -12,13 +14,16 @@ export type ComponentUpdater = {
 }
 
 export type IComponentManager = {
-	RegisterComponent: (self: IComponentManager, name: string, component: ComponentInterface) -> (),
+	RegisterComponent: (self: IComponentManager, name: string, component: ComponentInterface | BaseComponentType) -> (),
 	UnregisterComponent: (self: IComponentManager, name: string) -> (),
 	InitializeComponents: (self: IComponentManager, characterData: internalCharacter, config: CharacterConfig?) -> (),
 	UpdateComponents: (self: IComponentManager, characterData: internalCharacter, dt: number) -> (),
 	CleanupComponents: (self: IComponentManager, characterData: internalCharacter) -> (),
-	GetComponent: (self: IComponentManager, name: string) -> ComponentInterface?,
-	GetAllComponents: (self: IComponentManager) -> {[string]: ComponentInterface},
+	GetComponent: (self: IComponentManager, name: string) -> (ComponentInterface | BaseComponentType)?,
+	GetAllComponents: (self: IComponentManager) -> {[string]: ComponentInterface | BaseComponentType},
+	EnableComponent: (self: IComponentManager, characterData: internalCharacter, name: string) -> (),
+	DisableComponent: (self: IComponentManager, characterData: internalCharacter, name: string) -> (),
+	IsComponentEnabled: (self: IComponentManager, characterData: internalCharacter, name: string) -> boolean,
 }
 
 local ComponentManager = {}
@@ -27,7 +32,7 @@ ComponentManager.__index = ComponentManager
 function ComponentManager.new(): IComponentManager
 	local self = setmetatable({}, ComponentManager)
 	
-	self._components = {} :: {[string]: ComponentInterface}
+	self._components = {} :: {[string]: ComponentInterface | BaseComponentType}
 	self._updaters = {} :: {ComponentUpdater}
 	
 	-- Performance optimization: Pre-allocate arrays for hot paths
@@ -38,7 +43,7 @@ function ComponentManager.new(): IComponentManager
 	return (self :: any) :: IComponentManager
 end
 
-function ComponentManager:RegisterComponent(name: string, component: ComponentInterface)
+function ComponentManager:RegisterComponent(name: string, component: ComponentInterface | BaseComponentType)
 	if self._components[name] then
 		warn(`Component {name} already registered, overwriting`)
 	end
@@ -47,7 +52,18 @@ function ComponentManager:RegisterComponent(name: string, component: ComponentIn
 	
 	-- Cache updater if present with performance classification
 	if component and component.Update and typeof(component.Update) == "function" then
-		table.insert(self._updaters, { name = name, fn = component.Update })
+		-- Handle both old-style and new BaseComponent-style components
+		local updateFn = function(characterData, dt)
+			-- Check if it's a BaseComponent with self parameter
+			if (component :: any).Name and (component :: any).IsEnabled then
+				return component.Update(component, characterData, dt)
+			else
+				-- Old-style component
+				return component.Update(characterData, dt)
+			end
+		end
+		
+		table.insert(self._updaters, { name = name, fn = updateFn })
 		
 		-- Classify component for performance optimization
 		local isCritical = self:_IsCriticalComponent(name)
@@ -121,7 +137,16 @@ function ComponentManager:InitializeComponents(characterData: internalCharacter,
 			end
 			
 			-- Initialize component with character data and config
-			local success, err = pcall(component.Initialize, characterData, componentConfig)
+			-- Handle both old-style and new BaseComponent-style components
+			local success, err
+			if (component :: any).Name and (component :: any).IsEnabled then
+				-- BaseComponent style
+				success, err = pcall(component.Initialize, component, characterData, componentConfig)
+			else
+				-- Old style
+				success, err = pcall(component.Initialize, characterData, componentConfig)
+			end
+			
 			if not success then
 				warn(`Failed to initialize component {componentName}: {err}`)
 			end
@@ -155,7 +180,15 @@ end
 function ComponentManager:CleanupComponents(characterData: internalCharacter)
 	for componentName, component in pairs(self._components) do
 		if component.Cleanup then
-			local success, err = pcall(component.Cleanup, characterData)
+			local success, err
+			if (component :: any).Name and (component :: any).IsEnabled then
+				-- BaseComponent style
+				success, err = pcall(component.Cleanup, component, characterData)
+			else
+				-- Old style
+				success, err = pcall(component.Cleanup, characterData)
+			end
+			
 			if not success then
 				warn(`Failed to cleanup component {componentName}: {err}`)
 			end
@@ -163,12 +196,34 @@ function ComponentManager:CleanupComponents(characterData: internalCharacter)
 	end
 end
 
-function ComponentManager:GetComponent(name: string): ComponentInterface?
+function ComponentManager:GetComponent(name: string): (ComponentInterface | BaseComponentType)?
 	return self._components[name]
 end
 
-function ComponentManager:GetAllComponents(): {[string]: ComponentInterface}
+function ComponentManager:GetAllComponents(): {[string]: ComponentInterface | BaseComponentType}
 	return table.clone(self._components)
+end
+
+function ComponentManager:EnableComponent(characterData: internalCharacter, name: string)
+	local component = self._components[name]
+	if component and (component :: any).Enable then
+		(component :: any):Enable(characterData)
+	end
+end
+
+function ComponentManager:DisableComponent(characterData: internalCharacter, name: string)
+	local component = self._components[name]
+	if component and (component :: any).Disable then
+		(component :: any):Disable(characterData)
+	end
+end
+
+function ComponentManager:IsComponentEnabled(characterData: internalCharacter, name: string): boolean
+	local component = self._components[name]
+	if component and (component :: any).IsEnabled then
+		return (component :: any):IsEnabled(characterData)
+	end
+	return true -- Default to enabled for old-style components
 end
 
 return ComponentManager

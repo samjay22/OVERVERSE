@@ -1,7 +1,21 @@
+local RunService = game:GetService("RunService")
 local _NetworkServer = require(game.ServerStorage.Modules.Core.NetworkServer) 
 local CharacterManager = require(game.ServerStorage.Modules.Entities.Character.CharacterManager)
-local AbilityComponent = require(game.ServerStorage.Modules.Components.AbilityComponent)
 local StateManager = require(game.ReplicatedStorage.Modules.Utility.StateManager)
+
+-- Lazy load AbilityComponent to avoid circular dependencies
+local AbilityComponent = nil
+local function getAbilityComponent()
+    if not AbilityComponent then
+        local success, module = pcall(require, game.ServerStorage.Modules.Components.AbilityComponent)
+        if success then
+            AbilityComponent = module
+        else
+            warn("Failed to load AbilityComponent:", module)
+        end
+    end
+    return AbilityComponent
+end
 
 -- ===============================
 -- ABILITY INPUT HANDLER MODULE
@@ -11,8 +25,8 @@ local AbilityInputHandler = {}
 
 -- Constants
 local INPUT_TYPES = {
-    M1 = tostring(Enum.UserInputType.MouseButton1.Value),
-    M2 = tostring(Enum.UserInputType.MouseButton2.Value)
+    M1 = Enum.UserInputType.MouseButton1.Value,
+    M2 = Enum.UserInputType.MouseButton2.Value
 }
 
 local SLOT_KEYS = {"Q", "E", "R", "F"}
@@ -20,6 +34,9 @@ local MAX_SLOTS = 4
 
 -- Cache for KeyCode lookups to avoid repeated iterations
 local keyCodeCache = {}
+
+-- Track active characters and their last input states
+local trackedCharacters = {} -- {[character]: {lastKeys: {}, lastFired: {}, cooldowns: {}}}
 
 -- ===============================
 -- PRIVATE HELPER FUNCTIONS
@@ -36,77 +53,37 @@ end
 
 -- Get character data with validation
 local function getCharacterData(character)
-    local loadout = AbilityComponent.GetLoadout(character.PlayerId)
+    -- Get character name safely (character is an internalCharacter type)
+    local characterName = (character.Character and character.Character.Name) 
+        or (character.Entity and character.Entity.name)
+        or ("Player_" .. tostring(character.PlayerId))
+    
+    local component = getAbilityComponent()
+    if not component then
+        return nil
+    end
+    
+    local loadout = component.GetLoadout(character.PlayerId)
     if not loadout then
-        warn("No loadout found for character", character.Name)
         return nil
     end
     
-    local keyBindings = StateManager.Get(character.StateManager, "KeyBindings")
-    if not keyBindings then
-        warn("No key bindings found for character", character.Name)
-        return nil
-    end
-    
+    local keyBindings = StateManager.Get(character.StateManager, "KeyBindings") or {}
+
     return {
         loadout = loadout,
         keyBindings = keyBindings,
-        character = character
+        character = character,
+        name = characterName
     }
 end
 
--- Handle mouse button inputs
-local function handleMouseInput(inputType, activeKeys, characterData)
-    local key = INPUT_TYPES[inputType]
-    if not activeKeys[key] then return end
+-- Process ability activation
+local function activateAbility(inputType, ability, characterData)
+    if not ability then return end
     
-    local ability
-    if inputType == "M1" then
-        ability = characterData.keyBindings.M1Ability or 
-                 (characterData.loadout.primaryAttacks and characterData.loadout.primaryAttacks[1])
-    elseif inputType == "M2" then
-        ability = characterData.keyBindings.M2Ability or 
-                 (characterData.loadout.primaryAttacks and characterData.loadout.primaryAttacks[2])
-    end
-    
-    if ability then
-        AbilityInputHandler.onAbilityActivated(inputType, ability, characterData.character)
-    else
-        warn(inputType .. " pressed but no ability bound for", characterData.character.Name)
-    end
-end
-
--- Handle slot-based ability inputs
-local function handleSlotInputs(activeKeys, characterData)
-    local slots = characterData.keyBindings.Slots
-    local actives = characterData.loadout.actives
-    
-    if not slots or not actives then return end
-    
-    for slot = 1, MAX_SLOTS do
-        local slotBinding = slots[slot]
-        if slotBinding and slotBinding.numeric then
-            local ability = actives[slot]
-            
-            -- Check if any bound keys for this slot are active
-            for _, numCode in ipairs(slotBinding.numeric) do
-                local keyCode = keyCodeCache[numCode]
-                if keyCode and activeKeys[keyCode] then
-                    if ability then
-                        AbilityInputHandler.onAbilityActivated(
-                            "Slot" .. slot .. "(" .. SLOT_KEYS[slot] .. ")", 
-                            ability, 
-                            characterData.character
-                        )
-                    else
-                        warn("Slot", slot, "(" .. SLOT_KEYS[slot] .. ") pressed but no ability bound for", 
-                             characterData.character.Name)
-                    end
-                    break -- Found active key for this slot, no need to check others
-                end
-            end
-        end
-    end
+    -- Call the activation callback
+    AbilityInputHandler.onAbilityActivated(inputType, ability, characterData)
 end
 
 -- ===============================
@@ -115,31 +92,91 @@ end
 
 -- Callback function that can be overridden for custom behavior
 function AbilityInputHandler.onAbilityActivated(inputType, abilityName, character)
-    warn(inputType .. " ability activated:", abilityName, "for", character.Name)
+    warn(inputType .. " ability activated:", abilityName, "for", character.name)
 end
 
--- Main input handler
-function AbilityInputHandler.handleActiveKeysChange(character, activeKeys)
+-- Process inputs for a character on each heartbeat
+function AbilityInputHandler.processCharacter(character)
+    local activeKeys = StateManager.Get(character.StateManager, "ActiveKeys")
+    if not activeKeys then return end
+    
     local characterData = getCharacterData(character)
     if not characterData then return end
     
-    -- Handle mouse inputs
-    handleMouseInput("M1", activeKeys, characterData)
-    handleMouseInput("M2", activeKeys, characterData)
+    -- Check M1
+    local m1Key = INPUT_TYPES.M1
+    if activeKeys[m1Key] then
+        local ability = characterData.keyBindings.M1Ability or 
+                          (characterData.loadout.primaryAttacks and characterData.loadout.primaryAttacks[1])
+        if ability then
+            activateAbility("M1", ability, characterData)
+        end
+    end
     
-    -- Handle slot inputs
-    handleSlotInputs(activeKeys, characterData)
+    -- Check M2
+    local m2Key = INPUT_TYPES.M2
+    if activeKeys[m2Key] then
+        local ability = characterData.keyBindings.M2Ability or 
+                         (characterData.loadout.primaryAttacks and characterData.loadout.primaryAttacks[2])
+        if ability then
+            activateAbility("M2", ability, characterData)
+        end
+    end
+    
+    -- Check slot abilities (only on press, not hold)
+    local slots = characterData.keyBindings.Slots
+    local actives = characterData.loadout.actives
+    
+    if slots and actives then
+        for slot = 1, MAX_SLOTS do
+            local slotBinding = slots[slot]
+            if slotBinding and slotBinding.numeric then
+                local ability = actives[slot]
+                
+                for _, numCode in ipairs(slotBinding.numeric) do
+                    local keyStr = tostring(numCode)
+                    local isPressed = activeKeys[keyStr]
+                    
+                    -- Only trigger on key press transition
+                    if isPressed and ability then
+                        activateAbility("Slot" .. slot .. "(" .. SLOT_KEYS[slot] .. ")", ability, characterData)
+                        break
+                    end
+                end
+            end
+        end
+    end
 end
 
--- Initialize and set up character connections
+-- Cleanup tracking for a character
+function AbilityInputHandler.cleanup(character)
+    trackedCharacters[character] = nil
+end
+
+-- Initialize and set up the heartbeat loop
 function AbilityInputHandler.initialize()
     initializeKeyCodeCache()
     
+    -- Track characters as they're added
+    local activeCharacters = {}
+    
+   -- Set up heartbeat to process all tracked characters
+    RunService.Heartbeat:Connect(function()
+		for _, plr in ipairs(game.Players:GetChildren()) do
+			local char = CharacterManager:GetCharacterData(plr)
+			if char then
+				AbilityInputHandler.processCharacter(char)
+			end
+		end
+    end)
+    
+    -- Track and clean up characters
     CharacterManager:OnCharacterAdded(function(character)
-        character.OnStateChange.Event:Connect(function(name, value, old)
-            if name == "ActiveKeys" then
-                AbilityInputHandler.handleActiveKeysChange(character, value)
-            end
+        activeCharacters[character] = true
+        
+        character.OnDeath.Event:Connect(function()
+            activeCharacters[character] = nil
+            AbilityInputHandler.cleanup(character)
         end)
     end)
 end
@@ -149,6 +186,5 @@ end
 -- ===============================
 
 AbilityInputHandler.initialize()
-
 
 return AbilityInputHandler

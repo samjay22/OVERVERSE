@@ -84,11 +84,20 @@
 		"CameraController": "./src/StarterPlayerScripts/CameraController.client.luau",
 		"MouseController": "./src/StarterPlayerScripts/MouseController.client.luau",
 		"MovementAnimationHandler": "./src/StarterPlayerScripts/MovementAnimationHandler.client.luau",
-		"EffectService": "./src/ServerStorage/Modules/Services/EffectService.luau",
-		"CombatService": "./src/ServerStorage/Modules/Services/CombatService.luau",
-		"AbilityService": "./src/ServerStorage/Modules/Services/AbilityService.luau",
 		"InputHandler": "./src/StarterPlayerScripts/InputHandler.client.luau",
 		"AbilityManager": "./src/ServerScriptService/Scripts/AbilityManager.server.luau",
-		"AbilityInputHandler": "./src/ServerStorage/Modules/Handlers/AbilityInputHandler.luau"
+		"AbilityInputHandler": "./src/ServerStorage/Modules/Handlers/AbilityInputHandler.luau",
+		"E": "./src/ReplicatedStorage/Modules/Abilities/Rem/E.luau",
+		"CombatService": "./src/ServerStorage/Modules/Services/CombatService.luau",
+		"EffectService": "./src/ServerStorage/Modules/Services/EffectService.luau",
+		"BaseComponent": "./src/ServerStorage/Modules/Components/BaseComponent.luau",
+		"ComponentFactory": "./src/ServerStorage/Modules/Components/ComponentFactory.luau",
+		"ComponentTest": "./src/ServerStorage/Modules/Tests/ComponentTest.luau",
+		"ComponentRegistry": "./src/ServerStorage/Modules/Components/ComponentRegistry.luau",
+		"Default": "./src/ServerStorage/Modules/registery/Loadouts/Default.luau",
+		"Abilities": "./src/ServerStorage/Modules/registery/Abilities.luau",
+		"ComponentInitializer": "./src/ServerScriptService/Scripts/ComponentInitializer.server.luau",
+		"M1": "./src/ReplicatedStorage/Modules/Abilities/Rem/M1.luau",
+		"ClientAbilityManager": "./src/StarterPlayerScripts/ClientAbilityManager.client.luau"
 	}
 }
