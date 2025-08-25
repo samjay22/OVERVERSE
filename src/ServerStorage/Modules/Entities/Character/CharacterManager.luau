@@ -52,8 +52,9 @@ local mathMax = math.max
 local mathMin = math.min
 local tableInsert = table.insert
 local tableClear = table.clear
-local tableRemove = table.remove
 local taskSpawn = task.spawn
+local tableClone = table.clone
+local tableFreeze = table.freeze
 
 -- Memory pools for garbage collection optimization (declared before use)
 local EVENT_POOL = {} :: {BindableEvent}
@@ -191,6 +192,7 @@ export type ICharacterManager = {
     GetAbilityComponent: (self: ICharacterManager) -> any?,
     OnCharacterAdded: (self: ICharacterManager, callback: (CharacterData) -> ()) -> RBXScriptConnection,
     GetPerformanceMetrics: (self: ICharacterManager) -> any,
+    UpdateInputState: (self: ICharacterManager, entity: Player | EntityRef | number, input: any, state : boolean) -> boolean,
     Destroy: (self: ICharacterManager) -> (),
 }
 
@@ -289,6 +291,7 @@ function CharacterManager:_RegisterBuiltinComponents()
         [COMPONENT_NAMES.MOVEMENT] = componentPath.MovementComponent,
         [COMPONENT_NAMES.COMBAT] = componentPath.CombatComponent,
         [COMPONENT_NAMES.EFFECT] = componentPath.EffectComponent,
+        [COMPONENT_NAMES.INPUT] = componentPath.InputComponent,
     }
     
     for name, path in pairs(components) do
@@ -788,5 +791,19 @@ function CharacterManager:_SetupShiftStateHandling(characterData: internalCharac
         end
     end)
 end
+
+function CharacterManager:UpdateInputState(characterData: internalCharacter, input : any, state : boolean)
+    local inputComponent = self._componentCache[COMPONENT_NAMES.INPUT]
+    if not inputComponent then return end
+
+    local states : {[string] : any} = characterData.StateManager:Get("ActiveKeys") :: any
+    if not states then return end
+
+    local copy = tableClone(states)
+    copy[input.Value] = state
+
+    characterData.StateManager:Set("ActiveKeys", tableFreeze(copy))
+end
+
 
 return CharacterManager.New()

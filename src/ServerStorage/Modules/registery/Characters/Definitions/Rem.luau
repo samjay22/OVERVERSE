@@ -3,19 +3,6 @@
 
 local CharacterTypes = require(game.ServerStorage.Modules.Types.CharacterTypes)
 
-local function getEffectsHandler()
-	-- Safely get the Effects handler
-	local success, result = pcall(function()
-		return require(game.ReplicatedStorage.Modules.AssetHandlers).OnModuleLoaded("Effects")
-	end)
-	if success and result then
-		return result
-	else
-		warn("Failed to load Effects handler:", result)
-		return nil
-	end
-end
-
 local def: CharacterTypes.CharacterDefinition = {
 	id = "Rem",
 	displayName = "Rem-Ram",

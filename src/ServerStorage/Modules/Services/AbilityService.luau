@@ -1,12 +1,9 @@
 --!strict
 -- AbilityService: Optimized manager for per-character ability loadouts, cooldowns, and activation
-
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerStorage = game:GetService("ServerStorage")
 
 local CombatComponent = require(game.ServerStorage.Modules.Components.CombatComponent)
 local AbilityTypes = require(game.ServerStorage.Modules.Types.AbilityTypes)
-local ClientAbilities = require(game.ReplicatedStorage.Modules.ClientAbilities)
 local Character = require(game.ServerStorage.Modules.Entities.Character)
 
 -- Type exports

@@ -1,10 +1,6 @@
 --!strict
 -- InputComponent: tracks client-reported input and dispatches per-frame actions
-
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-
 local Enums = require(game.ReplicatedStorage.Modules.Types.Enums)
-local ClientAbilities = require(game.ReplicatedStorage.Modules.ClientAbilities)
 local AbilityTypes = require(game.ServerStorage.Modules.Types.AbilityTypes)
 local AbilityComponent = require(game.ServerStorage.Modules.Components.AbilityComponent)
 local CombatComponent = require(game.ServerStorage.Modules.Components.CombatComponent)
@@ -22,8 +18,7 @@ export type CharacterRef = {
 
 local InputComponent = {}
 
--- Fast numeric key mapping; matches Network.server encoding
-local OFFSET = 100000
+local OFFSET = 0
 local SLOT_TO_NUM_CODES: {[number]: {number}} = {
 	[1] = { Enum.KeyCode.Q.Value, Enum.KeyCode.One.Value },
 	[2] = { Enum.KeyCode.E.Value, Enum.KeyCode.Two.Value },
@@ -135,6 +130,7 @@ end
 
 function InputComponent.Update(characterData: CharacterRef, dt: number)
 	local keysAny = (characterData.StateManager:Get("ActiveKeys") :: any)
+	
 	if typeof(keysAny) ~= "table" then return end
 	local keys = keysAny :: {[number]: boolean}
 
@@ -144,6 +140,7 @@ function InputComponent.Update(characterData: CharacterRef, dt: number)
 
 	if hasM1 then
 		if AbilityComponent and AbilityComponent.M1 then
+			print("Called")
 			AbilityComponent.M1(characterData.Player, Enums.AttackType.Default)
 		else
 			if CombatComponent and CombatComponent.PerformAttack then
