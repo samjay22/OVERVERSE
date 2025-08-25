@@ -190,6 +190,8 @@ function CharacterFactory:CreateCharacterData(entity: EntityRef, characterModel:
 	if sheathInst and sheathInst:IsA("BasePart") then
 		sheathPart = sheathInst
 	end
+
+	local stateMachine = StateManager.New(signals.OnStateChange)
 	
 	-- Create character data structure
 	local characterData: internalCharacter = {
@@ -220,13 +222,13 @@ function CharacterFactory:CreateCharacterData(entity: EntityRef, characterModel:
 		_lastUpdate = 0,
 		
 		-- Systems
-		StateManager = StateManager.New(),
+		StateManager = stateMachine,
 		Components = {},
 		Definition = nil,
 		Custom = {},
 		
 		Animations = nil,
-	}
+	} :: any
 	
 	-- Initialize state manager with default states
 	self:_InitializeStateManager(characterData, config)

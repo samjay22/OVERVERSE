@@ -13,6 +13,7 @@ CharacterManager:OnCharacterAdded(function(character)
     character.OnDamage.Event:Connect(function(damage)
         print(`Character {entityName} took {damage} damage`)
     end)
+
     -- CharacterManager:SetCharacterState(character.Player, "IsRunning", true)
     -- CharacterManager:DamageCharacter(character.Player, 10)
     -- Apply an effect via Character API

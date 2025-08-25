@@ -57,7 +57,7 @@ function CharacterEventManager:SetupStateChangeSignals(characterData: internalCh
 	end)
 	
 	-- General state change signal
-	characterData.StateManager:OnStateChange("*", function(stateName, newVal, oldVal)
+	characterData.StateManager:OnStateChange("ShiftState", function(stateName, newVal, oldVal)
 		characterData.Signals.OnStateChange:Fire(stateName, newVal, oldVal)
 	end)
 end

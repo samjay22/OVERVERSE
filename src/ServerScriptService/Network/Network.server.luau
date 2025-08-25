@@ -8,11 +8,11 @@ local _WeaponComponent = require(game.ServerStorage.Modules.Components.WeaponCom
 local _Enums = require(game.ReplicatedStorage.Modules.Types.Enums)
 local _NetworkTypes = require(game.ReplicatedStorage.Modules.Types.NetworkTypes)
 
-_NetworkServer:RegisterRemoteEvent("StartCharacterAnimation").OnServerEvent:Connect(function(p)
-    warn(p, "tried to start character animation without server-side support")
-    error("Not supported")
-end)
+_NetworkServer:RegisterRemoteEvent("CastAbility")
+_NetworkServer:RegisterRemoteEvent("SetCharacter")
+_NetworkServer:RegisterRemoteEvent("StartCharacterAnimation")
 
+--//This handles ability updates
 _NetworkServer:RegisterRemoteEvent("ClientInputEvent").OnServerEvent:Connect(function(player: Player, key, state)
     local character = player.Character
     if not character then

@@ -10,6 +10,10 @@ local AbilityComponent = {}
 
 function AbilityComponent.Initialize(characterData: AbilityTypes.CharacterRef, config: any?)
     local loadout: AbilityTypes.Loadout? = (config and (config :: any).AbilityLoadout) or nil
+    characterData.Components.Ability = {
+        [Enum.UserInputType.MouseButton1] = "M1",
+        [Enum.UserInputType.MouseButton2] = "M2"
+    }
     _service:Initialize(characterData, loadout)
 end
 

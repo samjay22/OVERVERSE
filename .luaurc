@@ -7,7 +7,6 @@
 		"Weapons": "./src/ReplicatedStorage/Modules/AssetHandlers/Weapons.luau",
 		"init": "./src/ReplicatedStorage/Modules/AssetHandlers/init.luau",
 		"AssetTypes": "./src/ReplicatedStorage/Modules/Types/AssetTypes.luau",
-		"ClientAbilityTypes": "./src/ReplicatedStorage/Modules/Types/ClientAbilityTypes.luau",
 		"Enums": "./src/ReplicatedStorage/Modules/Types/Enums.luau",
 		"MouseTargetTypes": "./src/ReplicatedStorage/Modules/Types/MouseTargetTypes.luau",
 		"NetworkTypes": "./src/ReplicatedStorage/Modules/Types/NetworkTypes.luau",
@@ -88,6 +87,7 @@
 		"EffectService": "./src/ServerStorage/Modules/Services/EffectService.luau",
 		"CombatService": "./src/ServerStorage/Modules/Services/CombatService.luau",
 		"AbilityService": "./src/ServerStorage/Modules/Services/AbilityService.luau",
-		"InputHandler": "./src/StarterPlayerScripts/InputHandler.client.luau"
+		"InputHandler": "./src/StarterPlayerScripts/InputHandler.client.luau",
+		"AbilityManager": "./src/ServerScriptService/Scripts/AbilityManager.server.luau"
 	}
 }

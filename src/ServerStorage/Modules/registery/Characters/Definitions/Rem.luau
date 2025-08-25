@@ -1,6 +1,8 @@
 --!strict
 -- Shifter character with custom ShiftState
+local Players = game:GetService("Players")
 
+local NetworkServer = require(game.ServerStorage.Modules.Core.NetworkServer)
 local CharacterTypes = require(game.ServerStorage.Modules.Types.CharacterTypes)
 
 local def: CharacterTypes.CharacterDefinition = {
@@ -24,6 +26,7 @@ local def: CharacterTypes.CharacterDefinition = {
 	hooks = {
 		onInit = function(character : CharacterTypes.Character)
 			character.StateManager:Set("ShiftState", "Rem")
+			NetworkServer:FireClient("SetCharacter", Players:GetPlayerByUserId(character.PlayerId), "Rem")
 			warn("init rem")
 		end,
 		onUpdate = function(character, dt)

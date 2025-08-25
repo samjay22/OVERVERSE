@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-OVERVERSE is a Roblox game project built with Luau, featuring a complex ability system with client-side prediction and server validation. The project uses Rojo for syncing between the filesystem and Roblox Studio.
+OVERVERSE is a Roblox game project built with Luau, featuring a sophisticated component-based entity system with client-side prediction and server validation. The project uses Rojo for syncing between the filesystem and Roblox Studio.
 
 ## Development Commands
 
@@ -25,48 +25,68 @@ rojo build -o OVERVERSE.rbxl
 
 ## Core Architecture
 
-### Ability System
-The ability system is the heart of the game, split between client prediction and server validation:
+### Character System
+The game uses a modular component-based entity architecture:
 
-- **ClientAbilities** (`src/ReplicatedStorage/Modules/ClientAbilities/`): Each ability folder contains:
-  - `Client.luau`: Client-side effects and prediction
-  - `Server.luau`: Server validation and damage application
-  - `Config.luau`: Ability parameters (damage, cooldowns, ammo)
-  - `Shared.luau`: Shared validation logic
-  - `Assets.rbxm`: Visual/audio assets
+- **CharacterManager** (`ServerStorage/Modules/Entities/Character/`): Orchestrates all character operations
+- **ComponentManager**: Manages character components (Health, Stamina, Movement, Combat, Effect, Ability, Weapon, Input)
+- **CharacterFactory**: Creates character instances with proper configuration
+- **CharacterLifecycle**: Handles spawning, death, and respawn logic
+- **CharacterRegistry**: Tracks active characters and their states
+- **Manual Spawning**: `Players.CharacterAutoLoads` is disabled; characters spawn via queue system
 
-- **Ability Categories**:
-  - **Primary**: Ammo-based abilities with reload mechanics (e.g., RemM1)
-  - **Active/Secondary/Ultimate**: Cooldown-based abilities
-  - **Passive**: Always-active effects
+### Network Architecture
+- **NetworkManager** (`ServerStorage/Modules/Core/`): Centralized event management with EventBus integration
+- **Client Prediction**: Optimistic execution with server rollback via prediction types
+- **Input System**: Client captures → Server validates → Network replicates
+- **RemoteEvents**: Strongly typed communication between client and server
+
+### Registry System
+Content definition and management through registries:
+
+- **Characters** (`ServerStorage/Modules/registery/Characters/`): Character class definitions (e.g., Rem)
+- **Loadouts** (`ServerStorage/Modules/registery/Loadouts/`): Ability configurations per character/form
+- **Effects** (`ServerStorage/Modules/registery/Effects/`): Buff/debuff definitions (Bleed, Fortify, Rally, Regeneration)
+- **Weapons** (`ServerStorage/Modules/registery/Weapons/`): Weapon type definitions (Sword, Spear)
+
+### Service Architecture
+Server-side game logic orchestration:
+
+- **AbilityService**: Ability execution and validation
+- **CharacterService**: Character management interface
+- **CombatService**: Combat mechanics and damage calculation
+- **EffectService**: Effect application and management
+- **WeaponService**: Weapon behavior and stats
 
 ### Key Patterns
 
-#### GetSharedModule Pattern
-Every ability module implements `GetSharedModule()` to provide access to Config and Assets:
+#### Entity Reference System
+Unified handling of Players and NPCs:
 ```lua
-function Module.GetSharedModule()
-    local sharedMod = require(script.Parent.Shared)
-    sharedMod.GetAssets = function()
-        return script.Parent.Assets
-    end
-    sharedMod.GetConfig = function()
-        return require(script.Parent.Config)
-    end
-    return sharedMod
-end
+type EntityRef = {
+    entityType: "Player" | "NPC",
+    player: Player?,
+    npcId: string?,
+    name: string,
+    userId: number
+}
 ```
 
-#### Resource Management
-- **Ammo System**: Primary abilities use `MAX_AMMO`, `RELOAD_TIME`, `FIRE_RATE`
-- **Cooldown System**: Other abilities use `COOLDOWN_TIME`
-- Tracked client-side via `ClientAbilityTracker` with RunService.Heartbeat
+#### Component System
+Each character has modular components:
+- **AbilityComponent**: Manages ability cooldowns and execution
+- **CombatComponent**: Handles attack patterns and damage
+- **EffectComponent**: Tracks active effects and durations
+- **HealthComponent**: Health management and damage processing
+- **InputComponent**: Processes player input
+- **MovementComponent**: Character movement and physics
+- **StaminaComponent**: Stamina consumption and regeneration
+- **WeaponComponent**: Weapon state and attacks
 
-#### Client-Server Communication
-1. Client performs optimistic execution
-2. Server validates via `OnRequest`
-3. Client rolls back on rejection via `OnCancel`
-4. Other clients see effects via `OnReplicate`
+#### State Management
+- **StateManager**: Per-character state with validation
+- **CharacterStates**: State definitions and transitions
+- **StateSync**: Client-server state synchronization
 
 ### File Organization
 
@@ -74,51 +94,71 @@ end
 src/
 ├── ReplicatedStorage/       # Shared between client/server
 │   └── Modules/
-│       ├── ClientAbilities/ # Ability definitions
-│       ├── Types/          # Type definitions
+│       ├── AbilityAssets/  # Visual/audio assets per character
+│       ├── AssetHandlers/  # Asset loading utilities
+│       ├── CoreClient/     # Client-side systems
+│       ├── Types/          # Shared type definitions
 │       └── Utility/        # Shared utilities
-├── ServerScriptService/    # Server-only scripts
-│   └── Scripts/           # Server initialization
+├── ServerScriptService/    # Server initialization scripts
 ├── ServerStorage/         # Server-only modules
 │   └── Modules/
-│       ├── Entities/      # Character management
-│       └── Services/      # Game services
+│       ├── Components/    # Character component system
+│       ├── Core/          # Core server infrastructure
+│       ├── Entities/      # Character management system
+│       ├── Events/        # Event bus system
+│       ├── Services/      # Game services
+│       ├── Systems/       # Performance and scheduling
+│       ├── Types/         # Server type definitions
+│       ├── Utilities/     # Server utilities
+│       └── registery/     # Content definitions
 ├── StarterGui/           # UI components
-│   └── AbilityDisplay/   # Ammo/cooldown UI
-└── StarterPlayerScripts/ # Client scripts
+└── StarterPlayerScripts/ # Client initialization scripts
 ```
 
-## Common Development Tasks
+## Character System Details
 
-### Adding a New Ability
-1. Create folder in `src/ReplicatedStorage/Modules/ClientAbilities/AbilityName/`
-2. Add required modules: Client.luau, Server.luau, Config.luau, Shared.luau
-3. Set `ABILITY_CATEGORY` in Config to determine resource type
-4. Implement `GetSharedModule()` in both Client and Server modules
-5. Ability auto-tracked by ClientAbilityTracker if Config exists
+### Character Definitions
+Characters are defined with:
+- **Class Structure**: Base stats, abilities, and properties
+- **Shift States**: Characters can transform (e.g., Rem ↔ Ram)
+- **Loadout System**: Different ability sets per state
+- **Custom Fields**: Character-specific timers and properties
 
-### Testing Abilities
-- Use DebugAbilityTracker in StarterPlayerScripts for console logging
-- Check AbilityDisplay UI in game for ammo/cooldown status
-- Server validation errors appear in server console
+### Combat System
+- **Damage Types**: Physical, Magical, True, Poison, Fire, Ice, Lightning
+- **Effect System**: Timed, permanent, or conditional effects
+- **Guard System**: Blocking with efficiency calculations
+- **Combat Events**: Centralized event bus for combat actions
+
+## Performance Optimization
+
+- **UpdateLoop**: 60Hz character updates with batch processing (default: 10 characters/batch)
+- **Object Pooling**: Event and cleanup pools to reduce garbage collection
+- **FrameBudgetManager**: Ensures consistent frame times
+- **PerformanceMonitor**: Tracks system performance metrics
+- **Distance Culling**: Performance scaling based on player proximity
 
 ## Important Considerations
 
-### Ability Loading
-The ability loader (`ClientAbilities/init.luau`) dynamically injects `GetSharedModule` if missing or placeholder. Always check if existing implementation works before replacing.
+### Type Safety
+- Extensive use of strict typing throughout the codebase
+- Well-defined interfaces for all major systems
+- Centralized constants and enums
+- Type validation for state management
 
-### Performance
-- Use RunService.Heartbeat for frame-accurate timing
-- Client prediction reduces perceived latency
-- Server validates all ability usage to prevent exploits
+### Asset Management
+- **AbilityAssets**: Organized by character and ability type (M1, M2, E, F, Shift)
+- **AssetHandlers**: Specialized loaders for animations, characters, effects, weapons
+- **Preloading**: AssetPreloader for optimal loading
 
-### Common Issues
-- **"Should be injected" error**: GetSharedModule needs proper implementation
-- **Config returns false**: Check GetSharedModule injection logic
-- **Abilities not tracked**: Ensure Config module exists with ABILITY_CATEGORY
+### Development Notes
+- **Workspace Streaming**: Enabled with 500-2000 stud radius
+- **Manual Character Spawning**: Queue-based system with configuration support
+- **Event-Driven Architecture**: EventBus for decoupled communication
+- **Service Pattern**: ServiceManager orchestrates all game services
 
 ## Project Configuration
 
 - **Rojo Project**: `default.project.json` - Maps filesystem to Roblox services
-- **Toolchain**: `aftman.toml` / `rokit.toml` - Manages Rojo version
+- **Toolchain**: `aftman.toml` / `rokit.toml` - Manages tool versions
 - **Source Map**: `sourcemap.json` - Generated by Rojo for debugging

@@ -5,7 +5,6 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerStorage = game:GetService("ServerStorage")
-local RunService = game:GetService("RunService")
 
 local CharacterTypes = require(game.ServerStorage.Modules.Types.CharacterTypes)
 local Constants = require(game.ReplicatedStorage.Modules.Utility.Constants)
@@ -292,6 +291,8 @@ function CharacterManager:_RegisterBuiltinComponents()
         [COMPONENT_NAMES.COMBAT] = componentPath.CombatComponent,
         [COMPONENT_NAMES.EFFECT] = componentPath.EffectComponent,
         [COMPONENT_NAMES.INPUT] = componentPath.InputComponent,
+        [COMPONENT_NAMES.ABILITY] = componentPath.AbilityComponent,
+        [COMPONENT_NAMES.WEAPON] = componentPath.WeaponComponent,
     }
     
     for name, path in pairs(components) do
@@ -336,6 +337,7 @@ function CharacterManager:_SetupPlayerEvents()
     tableInsert(self._connections, Players.PlayerRemoving:Connect(function(player: Player)
         self:CleanupCharacter(player)
     end))
+
 end
 
 function CharacterManager:SpawnCharacter(entity: Player | EntityRef, config: CharacterConfig?): CharacterData?
