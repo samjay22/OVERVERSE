@@ -8,7 +8,7 @@ local ServerStorage = game:GetService("ServerStorage")
 
 local CharacterTypes = require(game.ServerStorage.Modules.Types.CharacterTypes)
 local Constants = require(game.ReplicatedStorage.Modules.Utility.Constants)
-local NetworkServer = require(game.ServerStorage.Modules.Core.NetworkServer)
+local NetworkServer = require(game.ReplicatedStorage.Modules.Network.Server)
 local LoadoutRegistry = require(game.ServerStorage.Modules.registery.Loadouts)
 
 -- Import abstracted modules
@@ -404,8 +404,8 @@ function CharacterManager:SpawnCharacter(entity: Player | EntityRef, config: Cha
     
     -- Only fire network events for players, not NPCs
     if entityRef.entityType == "Player" and entityRef.player then
-        NetworkServer:FireClient("StartCharacterAnimation", entityRef.player, { "Idle" })
-        
+        NetworkServer.StartCharacterAnimation.Fire(entityRef.player, "Idle" )
+
         if self._coreRemote then
             self._coreRemote:FireClient(entityRef.player, "CharacterSpawned", time(), characterData.Character)
         end

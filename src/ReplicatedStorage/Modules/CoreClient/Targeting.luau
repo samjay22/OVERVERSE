@@ -17,12 +17,7 @@ type TargetSystem = {
     isServer: boolean,
     targets: {[Player]: TargetData},
     callbacks: {[string]: (Player, Model?, Model?) -> ()},
-    remotes: {
-        SetTarget: RemoteEvent,
-        GetTarget: RemoteFunction,
-        TargetChanged: RemoteEvent,
-        RequestTarget: RemoteFunction
-    }
+    network: any -- Blink network module
 }
 
 export type TargetSystemType = typeof(setmetatable({} :: TargetSystem, TargetSystem))
@@ -40,23 +35,15 @@ function TargetSystem.new(): TargetSystemType
     self.targets = {}
     self.callbacks = {}
     
-    -- Wait for ReplicatedStorage to be ready
-    if not self.isServer then
-        repeat
-            task.wait()
-        until ReplicatedStorage:FindFirstChild("Remotes")
+    -- Get the network module
+    local NetworkModule
+    if self.isServer then
+        NetworkModule = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Network"):WaitForChild("Server"))
+    else
+        NetworkModule = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Network"):WaitForChild("Client"))
     end
     
-    -- Create or get remotes folder
-    local remotesFolder: Folder = ReplicatedStorage:WaitForChild("Remotes") :: Folder
-
-    -- Setup remotes
-    self.remotes = {
-        SetTarget = self:_getOrCreateRemote(remotesFolder, "SetTarget", "RemoteEvent") :: RemoteEvent,
-        GetTarget = self:_getOrCreateRemote(remotesFolder, "GetTarget", "RemoteFunction") :: RemoteFunction,
-        TargetChanged = self:_getOrCreateRemote(remotesFolder, "TargetChanged", "RemoteEvent") :: RemoteEvent,
-        RequestTarget = self:_getOrCreateRemote(remotesFolder, "RequestTarget", "RemoteFunction") :: RemoteFunction
-    }
+    self.network = NetworkModule
     
     -- Initialize based on context
     if self.isServer then
@@ -69,35 +56,12 @@ function TargetSystem.new(): TargetSystemType
     return self
 end
 
-function TargetSystem:_getOrCreateRemote(parent: Folder, name: string, className: string): Instance
-    local remote: Instance? = parent:FindFirstChild(name)
-    if not remote then
-        if self.isServer then
-            remote = Instance.new(className :: any)
-            remote.Name = name
-            remote.Parent = parent
-        else
-            remote = parent:WaitForChild(name)
-        end
-    end
-    return remote :: Instance
-end
 
 function TargetSystem:_initServer(): ()
-    -- Handle client requests to set target
-    self.remotes.SetTarget.OnServerEvent:Connect(function(player: Player, targetModel: Model?)
+    -- Handle client requests to set target using Blink network module
+    self.network.SetTarget.On(function(player: Player, targetModel: Model?)
         self:_serverSetTarget(player, targetModel)
     end)
-    
-    -- Handle get target requests
-    self.remotes.GetTarget.OnServerInvoke = function(player: Player): Model?
-        return self:GetTarget(player)
-    end
-    
-    -- Handle target info requests
-    self.remotes.RequestTarget.OnServerInvoke = function(player: Player, queryPlayer: Player): Model?
-        return self:GetTarget(queryPlayer)
-    end
     
     -- Clean up on player removal
     Players.PlayerRemoving:Connect(function(player: Player)
@@ -116,8 +80,8 @@ end
 function TargetSystem:_initClient(): ()
     local player: Player = Players.LocalPlayer
     
-    -- Listen for target changes from server
-    self.remotes.TargetChanged.OnClientEvent:Connect(function(targetModel: Model?)
+    -- Listen for target changes from server using Blink network module
+    self.network.TargetChanged.On(function(targetModel: Model?)
         local oldTarget: Model? = self.targets[player] and self.targets[player].target
         
         if targetModel then
@@ -131,22 +95,6 @@ function TargetSystem:_initClient(): ()
         end
         
         self:_fireCallbacks(player, targetModel, oldTarget)
-    end)
-    
-    -- Sync initial target
-    task.spawn(function()
-        task.wait(1) -- Give server time to initialize
-        local success: boolean, result: any = pcall(function()
-            return self.remotes.GetTarget:InvokeServer()
-        end)
-        
-        if success and result then
-            self.targets[player] = {
-                target = result :: Model,
-                timestamp = os.time(),
-                playerId = player.UserId
-            }
-        end
     end)
 end
 
@@ -180,8 +128,8 @@ function TargetSystem:_serverSetTarget(player: Player, targetModel: Model?): (bo
         self.targets[player] = nil
     end
     
-    -- Notify client
-    self.remotes.TargetChanged:FireClient(player, targetModel)
+    -- Notify client using Blink network module
+    self.network.TargetChanged.Fire(player, targetModel)
     
     -- Fire server callbacks
     self:_fireCallbacks(player, targetModel, oldTarget)
@@ -197,13 +145,13 @@ function TargetSystem:SetTarget(player: Player, targetModel: Model?): boolean
         end
         return success
     else
-        -- Client-side: send request to server
+        -- Client-side: send request to server using Blink network module
         if targetModel and not targetModel:IsA("Model") then
             warn("Target must be a Model")
             return false
         end
         
-        self.remotes.SetTarget:FireServer(targetModel)
+        self.network.SetTarget.Fire(targetModel)
         return true
     end
 end

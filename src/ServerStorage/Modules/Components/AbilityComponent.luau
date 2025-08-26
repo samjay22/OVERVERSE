@@ -455,10 +455,17 @@ function AbilityComponent:_ExecuteAbility(player: Player, characterData: Charact
         local success = abilityModule.Server:Validate(player, ctxExtra)
         if success then
             -- Fire network event for client replication
-            local NetworkManager = require(game.ServerStorage.Modules.Core.NetworkManager)
-            if NetworkManager and player then
+            local _NetworkServer = require(game.ReplicatedStorage.Modules.Network.Server)
+            if _NetworkServer and player then
                 -- Commented out to reduce spam
                 -- warn("Ability activated:", abilityId)
+                _NetworkServer.CastAbility.FireExcept(player, {
+                    AbilityName = abilityId :: string,
+                    PlayerCaster = player :: Player,
+                    Position = player.Character and player.Character.PrimaryPart and player.Character.PrimaryPart.Position :: Vector3,
+                    Direction = player.Character and player.Character.PrimaryPart and player.Character.PrimaryPart.CFrame.LookVector :: Vector3,
+                    CharacterName = player.Character and player.Character.Name :: string
+                })
             end
         end
         return success

@@ -1,5 +1,4 @@
 local RunService = game:GetService("RunService")
-local _NetworkServer = require(game.ServerStorage.Modules.Core.NetworkServer) 
 local CharacterManager = require(game.ServerStorage.Modules.Entities.Character.CharacterManager)
 local StateManager = require(game.ReplicatedStorage.Modules.Utility.StateManager)
 

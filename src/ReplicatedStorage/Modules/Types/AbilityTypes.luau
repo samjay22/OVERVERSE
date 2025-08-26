@@ -10,7 +10,8 @@ export type Client = {
     OnUse : (self: Client, player: Player) -> boolean,
     OnReplicate : (self: Client, player: Player) -> boolean,
     OnCancel : (self: Client, player: Player) -> boolean,
-    GetCharacterAnimations : (self: Client, player: Player) -> Folder
+    GetCharacterAnimations : (self: Client, player: Player) -> Folder,
+    OnStateSync : (self: Client, syncData : {[string]: any}) -> boolean,
 }
 
 export type Server = {
@@ -18,7 +19,8 @@ export type Server = {
         [string] : any
     },
     Validate : (self: Server, player: Player, ctxExtra : {[string]: any}?) -> boolean,
-    OnUpdate : (self: Server, dt: number) -> boolean
+    OnUpdate : (self: Server, dt: number) -> boolean,
+    _SyncToClient : (self: Server, player: Player, sm : any) -> boolean
 }
 
 export type AbilityModule = {
