@@ -81,7 +81,7 @@ end
 -- Determine if a component needs critical (every frame) updates
 function ComponentManager:_IsCriticalComponent(componentName: string): boolean
 	local criticalComponents = {
-		"Health", "Movement", "Combat", "Input"
+		"Health", "Movement", "Combat", "Input", "Mouse"
 	}
 	
 	for _, critical in ipairs(criticalComponents) do

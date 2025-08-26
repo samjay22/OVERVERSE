@@ -7,6 +7,8 @@ local RunService = game:GetService("RunService")
 local Types = require(game.ReplicatedStorage.Modules.Types.AbilityTypes)
 local AbilityStateMachine = require(game.ReplicatedStorage.Modules.Utility.AbilityStateMachine)
 local Targeting = require(game.ReplicatedStorage.Modules.CoreClient.Targeting)
+local CameraShaker = require(game.ReplicatedStorage.Modules.Utility.CameraShakeManager)
+
 
 -- Load effects
 local EffectsFolder = game.ReplicatedStorage.Modules.Effects.Rem:WaitForChild("M1")
@@ -33,10 +35,15 @@ local Config = {
     AnimationList = {"1", "2", "3"},
 }
 
+-- Projectile configuration
+local PROJECTILE_SPEED = 100 -- studs per second
+local MAX_DISTANCE = Config.Range or 100 -- max travel distance
+local TRAVEL_TIME = MAX_DISTANCE / PROJECTILE_SPEED
+
 -- State machine configuration
 local STATE_MACHINE_CONFIG: AbilityStateMachine.AbilityConfig = {
     abilityName = "M1_State",
-    syncRate = 0.05,
+    syncRate = 0.25,
     syncOnChange = true, -- We'll manually control sync timing
     states = {
         -- Combat states
@@ -53,6 +60,9 @@ local STATE_MACHINE_CONFIG: AbilityStateMachine.AbilityConfig = {
         {name = "PendingShots", defaultValue = {}, syncToClient = true},
         {name = "ServerSequence", defaultValue = 0, syncToClient = true},
         {name = "LastSyncTime", defaultValue = 0, syncToClient = true},
+        
+        -- Mouse position for raycasting
+        {name = "LastMouseHitPosition", defaultValue = Vector3.new(0, 0, 0), syncToClient = false},
     }
 }
 
@@ -65,8 +75,8 @@ local Ability: Types.AbilityModule = {
             Animations = {},
             Effects = {}, -- Store active effect instances for cleanup
             Sounds = {},
-            StateMachine = nil :: any, -- Will be set to AbilityStateMachine at runtime
-            UpdateLoop = nil
+            StateMachine = nil :: AbilityStateMachine.AbilityStateMachine?,
+            UpdateLoop = nil :: RBXScriptConnection?
         },
         AbilityEffects = game.ReplicatedStorage.Modules.Effects,
         AbilitySounds = Instance.new("Folder"),
@@ -98,6 +108,17 @@ local Ability: Types.AbilityModule = {
             
             local sm = self.InternalState.StateMachine :: AbilityStateMachine.AbilityStateMachine
             local currentTime = tick()
+            
+            -- Capture mouse hit position for server raycasting
+            local mouseHitPosition: Vector3? = nil
+            if RunService:IsClient() then
+                local mouse = player:GetMouse()
+                if mouse and mouse.Hit then
+                    mouseHitPosition = mouse.Hit.Position
+                    -- Store for server sync
+                    sm:Set("LastMouseHitPosition", mouseHitPosition)
+                end
+            end
             
             -- Check cooldowns first
             if currentTime < sm:Get("BurstCooldownEnd") or currentTime < sm:Get("ReloadCooldownEnd") then
@@ -132,7 +153,7 @@ local Ability: Types.AbilityModule = {
             sm:Set("PendingShots", pending)
             
             warn(`Client M1 - Seq: {sequence}, Burst: {burst-1}/{Config.BurstAmount}, Ammo: {ammo-1}/{Config.Ammo}`)
-
+            
             -- Play animation and get the track for timing
             local playAnim = (self :: any)._PlayAnimation
             local animationTrack = nil
@@ -168,7 +189,7 @@ local Ability: Types.AbilityModule = {
                     -- Spawn projectile after animation timing (ensure animation plays fully)
                     if animationTrack then
                         -- Wait for animation to reach firing point (typically 30% through)
-                        local fireDelay = math.max(animationTrack.Length * 0.3, 0.1)
+                        local fireDelay = math.max(animationTrack.Length * 0.5, 0.1)
                         task.delay(fireDelay, function()
                             if player.Character then
                                 local hrp = player.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
@@ -176,6 +197,7 @@ local Ability: Types.AbilityModule = {
                                     -- Spawn cast effect immediately
                                     local spawnCast = (self :: any)._SpawnCastEffect
                                     local spawnProj = (self :: any)._SpawnProjectileEffect
+                                    CameraShaker.Bump(hrp.Position, 10, 1 / 4)
                                     if spawnCast then
                                         spawnCast(self, hrp.Position, direction, shotInBurst)
                                     end
@@ -282,7 +304,7 @@ local Ability: Types.AbilityModule = {
             -- Emit particles once when spawned
             for _, descendant in castEffect:GetDescendants() do
                 if descendant:IsA("ParticleEmitter") then
-                    descendant:Emit(descendant.Rate * 0.5) -- Emit based on rate
+                    descendant:Emit(1) -- Emit based on rate
                 end
             end
             
@@ -303,11 +325,7 @@ local Ability: Types.AbilityModule = {
             else
                 projectileEffect = Effects.projectile3:Clone()
             end
-            
-            -- Projectile configuration
-            local PROJECTILE_SPEED = 100 -- studs per second
-            local MAX_DISTANCE = Config.Range or 100 -- max travel distance
-            local TRAVEL_TIME = MAX_DISTANCE / PROJECTILE_SPEED
+    
             
             projectileEffect.Anchored = true -- Anchor and move manually for better control
             projectileEffect.CanCollide = false
@@ -352,7 +370,7 @@ local Ability: Types.AbilityModule = {
                 -- Emit particles
                 for _, descendant in projectileEffect:GetDescendants() do
                     if descendant:IsA("ParticleEmitter") then
-                        descendant:Emit(1)
+                        descendant:Emit(2)
                     end
                 end
                 
@@ -417,7 +435,7 @@ local Ability: Types.AbilityModule = {
             -- Emit hit particles once
             for _, descendant in hitEffect:GetDescendants() do
                 if descendant:IsA("ParticleEmitter") then
-                    descendant:Emit(descendant.Rate) -- Full burst on hit
+                    descendant:Emit(10) -- Full burst on hit
                 end
             end
             
@@ -602,10 +620,22 @@ local Ability: Types.AbilityModule = {
         InternalState = {
             PlayerStateMachines = {} :: {[number]: AbilityStateMachine.AbilityStateMachine},
         },
-        
-        Validate = function(self, player, ctxExtra)
+
+        Validate = function(self, player, onHit, x)
+            local internalTypes = require(game.ServerStorage.Modules.Types.CharacterTypes)
+            local characterData : internalTypes.internalCharacter = x
+
             local playerId = player.UserId
             local currentTime = tick()
+            
+            -- Get target position from characterData's MouseComponent
+            local targetPosition: Vector3? = nil
+            if characterData.Components.Mouse then
+                local mouseComp = characterData.Components.Mouse
+                if mouseComp.IsValid then
+                    targetPosition = mouseComp.MouseHitPosition
+                end
+            end
             
             -- Get or create state machine
             if not self.InternalState.PlayerStateMachines[playerId] then
@@ -644,6 +674,36 @@ local Ability: Types.AbilityModule = {
             })
             
             warn(`Server M1 - Seq: {sequence}, Burst: {burst-1}/{Config.BurstAmount}, Ammo: {ammo-1}/{Config.Ammo}`)
+        
+            warn(characterData.Components)
+            
+        
+            local entityPosition : Vector3 = characterData.Components.Movement.Position
+            -- Perform raycast from entity position to target position
+            if targetPosition then                
+                local currentTarget = characterData.Components.Mouse.MouseTarget
+                if currentTarget then
+                    task.delay(TRAVEL_TIME, function()
+                        onHit(currentTarget)
+                    end)
+                end
+            else
+                -- Debug: warn("Server M1 - No target position provided, using look direction")
+                -- Fallback to using character's look direction if no target position
+                if player.Character and player.Character.PrimaryPart then
+                    local direction = player.Character.PrimaryPart.CFrame.LookVector
+                    local raycastParams = RaycastParams.new()
+                    raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+                    if player.Character then
+                        raycastParams.FilterDescendantsInstances = {player.Character}
+                    end
+                    
+                    local raycastResult = workspace:Raycast(entityPosition, direction * Config.Range, raycastParams)
+                    if raycastResult and raycastResult.Instance.Parent:FindFirstChild("Humanoid") then
+                        onHit(raycastResult.Instance.Parent)
+                    end
+                end
+            end
             
             -- Handle cooldowns
             if ammo - 1 <= 0 then

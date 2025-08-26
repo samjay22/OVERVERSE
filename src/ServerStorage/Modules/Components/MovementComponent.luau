@@ -15,6 +15,7 @@ type MovementComponentData = {
     IsMoving: boolean,
     MoveDirection: Vector3,
     SpeedMultiplier: number,
+    Position: Vector3,
 }
 
 export type MovementComponent = BaseComponent.BaseComponent & {
@@ -57,6 +58,7 @@ function MovementComponent:Initialize(characterData: CharacterTypes.internalChar
         IsMoving = false,
         MoveDirection = Vector3.zero,
         SpeedMultiplier = 1,
+        Position = Vector3.zero,
     }
     
     characterData.Components.Movement = componentData :: any
@@ -123,7 +125,9 @@ function MovementComponent:Update(characterData: CharacterTypes.internalCharacte
     local moveVector = humanoid.MoveDirection
     component.MoveDirection = moveVector
     component.IsMoving = moveVector.Magnitude > 0.1
-    
+
+    component.Position = characterData.Character.PrimaryPart.Position
+
     -- Update state manager
     stateManager:Set("IsMoving", component.IsMoving)
     

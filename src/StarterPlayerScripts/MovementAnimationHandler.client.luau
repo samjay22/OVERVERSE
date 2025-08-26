@@ -20,6 +20,7 @@ local Players = game:GetService("Players")
 
 -- Dependencies
 local BindableEventHelper = require(game.ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Utility"):WaitForChild("BindableEventHelper"))
+local CameraShake = require(game.ReplicatedStorage.Modules.Utility.CameraShakeManager)
 
 -- Check for shift lock state
 local ShiftLockState = ReplicatedStorage:WaitForChild("ShiftLockState")
@@ -293,6 +294,17 @@ function MovementAnimationHandler:_setupAnimationFolderMonitoring()
     local function onTagged(instance)
         self.animationFolder = instance
         self:_checkAnimationFolder()
+
+        for _, anim in instance:GetChildren() do
+            if anim:IsA("Animation") then
+                local char = Player.Character
+                local humanoid = char.Humanoid
+                local animator = humanoid:FindFirstChild("Animator")
+                if animator then
+                    animator:LoadAnimation(anim)
+                end
+            end
+        end
     end
     
     local function onUntagged(instance)

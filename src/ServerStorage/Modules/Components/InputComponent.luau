@@ -56,6 +56,7 @@ function InputComponent:Initialize(characterData: CharacterTypes.internalCharact
     -- Initialize key bindings in state manager
     characterData.StateManager:Set("ActiveKeys", {})
     characterData.StateManager:Set("KeyBindings", componentData.KeyBindings)
+    characterData.StateManager:Set("MouseHitPosition", Vector3.new(0, 0, 0))
 end
 
 function InputComponent:Update(characterData: CharacterTypes.internalCharacter, dt: number)
@@ -132,8 +133,13 @@ function InputComponent:_ProcessCombatInputs(characterData: CharacterTypes.inter
     -- Primary attack (M1)
     local hasM1 = keys[OFFSET + Enum.UserInputType.MouseButton1.Value] == true
     if hasM1 then
-        if characterData.Player and AbilityComponent.M1 then
-            AbilityComponent.M1(characterData.Player, Enums.AttackType.Default)
+        -- Get player from characterData
+        local player = characterData.Player or (characterData.PlayerId and game.Players:GetPlayerByUserId(characterData.PlayerId))
+        
+        if player and AbilityComponent.M1 then
+            -- MouseComponent already updates characterData with mouse position
+            -- No need to pass it separately
+            AbilityComponent.M1(player, Enums.AttackType.Default)
         elseif CombatComponent.PerformAttack then
             CombatComponent.PerformAttack(characterData, Enums.AttackType.Default)
         end
@@ -141,8 +147,10 @@ function InputComponent:_ProcessCombatInputs(characterData: CharacterTypes.inter
     
     -- Secondary action (M2)
     local hasM2 = keys[OFFSET + Enum.UserInputType.MouseButton2.Value] == true
-    if characterData.Player and AbilityComponent.M2 then
-        AbilityComponent.M2(characterData.Player, hasM2)
+    local player = characterData.Player or (characterData.PlayerId and game.Players:GetPlayerByUserId(characterData.PlayerId))
+    
+    if player and AbilityComponent.M2 then
+        AbilityComponent.M2(player, hasM2)
     elseif CombatComponent.PerformBlock then
         CombatComponent.PerformBlock(characterData, hasM2)
     end
@@ -161,7 +169,9 @@ function InputComponent:_ProcessAbilityInputs(characterData: CharacterTypes.inte
         end
     end
     
-    if not characterData.Player or not AbilityComponent.GetLoadout then
+    local player = characterData.Player or (characterData.PlayerId and game.Players:GetPlayerByUserId(characterData.PlayerId))
+    
+    if not player or not AbilityComponent.GetLoadout then
         return
     end
     
@@ -193,7 +203,7 @@ function InputComponent:_ProcessAbilityInputs(characterData: CharacterTypes.inte
         if down and not wasDown then
             local abilityId = activeIds[slot]
             if abilityId and AbilityComponent.Activate then
-                AbilityComponent.Activate(characterData.Player, abilityId, nil)
+                AbilityComponent.Activate(player, abilityId, nil)
             end
         end
         

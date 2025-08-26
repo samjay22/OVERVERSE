@@ -11,11 +11,12 @@
 	CameraShakePresets.HandheldCamera
 	CameraShakePresets.Vibration
 	CameraShakePresets.RoughDriving
+	CameraShakePresets.Walking
 	
 --]]
 
 
-
+local Players = game:GetService("Players")
 local CameraShakeInstance = require(script.Parent.CameraShakeInstance)
 
 local CameraShakePresets = {
@@ -87,6 +88,15 @@ local CameraShakePresets = {
 		local c = CameraShakeInstance.new(1, 2, 1, 1)
 		c.PositionInfluence = Vector3.new(0, 0, 0)
 		c.RotationInfluence = Vector3.new(1, 1, 1)
+		return c
+	end;
+	
+	
+	
+	Walking = function()
+		local c = CameraShakeInstance.new(1, 1, 1, .25)
+		c.PositionInfluence = Vector3.zero
+		c.RotationInfluence = Vector3.new(0, 1, 1)
 		return c
 	end;
 	

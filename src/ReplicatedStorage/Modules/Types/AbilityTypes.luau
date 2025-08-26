@@ -18,7 +18,7 @@ export type Server = {
     InternalState : {
         [string] : any
     },
-    Validate : (self: Server, player: Player, ctxExtra : {[string]: any}?) -> boolean,
+    Validate : (self: Server, player: Player, onHitCallback : (target : Model?) -> nil, casterEntity : CharacterTypes.internalCharacter) -> boolean,
     OnUpdate : (self: Server, dt: number) -> boolean,
     _SyncToClient : (self: Server, player: Player, sm : any) -> boolean
 }

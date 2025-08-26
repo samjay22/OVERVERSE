@@ -266,7 +266,7 @@ local function WriteEVENT_RequestAbilityCast(Value: { AbilityId: number, Target:
 	buffer.writef32(SendBuffer, BLOCK_START + 11, Vector.Z)
 end
 
-local function ReadEVENT_stateSync(): ({ States: {[string]: any} })
+local function ReadEVENT_StateSync(): ({ States: {[string]: any} })
 	-- Read BLOCK: 2 bytes
 	local BLOCK_START = Read(2)
 	local Value = {} :: any
@@ -281,6 +281,28 @@ local function ReadEVENT_stateSync(): ({ States: {[string]: any} })
 		Value.States[Key_1] = Element_1
 	end
 	return Value
+end
+
+local function WriteEVENT_UpdateMouse(Value: { MouseHit: Vector3, MouseUnit: Vector3, Origin: Vector3, MouseScreenPosition: Vector3 }): ()
+	-- Allocate BLOCK: 49 bytes
+	local BLOCK_START = Allocate(49)
+	buffer.writeu8(SendBuffer, BLOCK_START + 0, 2)
+	local Vector = Value.MouseHit
+	buffer.writef32(SendBuffer, BLOCK_START + 1, Vector.X)
+	buffer.writef32(SendBuffer, BLOCK_START + 5, Vector.Y)
+	buffer.writef32(SendBuffer, BLOCK_START + 9, Vector.Z)
+	local Vector = Value.MouseUnit
+	buffer.writef32(SendBuffer, BLOCK_START + 13, Vector.X)
+	buffer.writef32(SendBuffer, BLOCK_START + 17, Vector.Y)
+	buffer.writef32(SendBuffer, BLOCK_START + 21, Vector.Z)
+	local Vector = Value.Origin
+	buffer.writef32(SendBuffer, BLOCK_START + 25, Vector.X)
+	buffer.writef32(SendBuffer, BLOCK_START + 29, Vector.Y)
+	buffer.writef32(SendBuffer, BLOCK_START + 33, Vector.Z)
+	local Vector = Value.MouseScreenPosition
+	buffer.writef32(SendBuffer, BLOCK_START + 37, Vector.X)
+	buffer.writef32(SendBuffer, BLOCK_START + 41, Vector.Y)
+	buffer.writef32(SendBuffer, BLOCK_START + 45, Vector.Z)
 end
 
 if not RunService:IsRunning() then
@@ -310,8 +332,11 @@ if not RunService:IsRunning() then
 	RequestAbilityCast = {
 		Fire = NOOP
 	},
-	stateSync = {
+	StateSync = {
 		On = NOOP
+	},
+	UpdateMouse = {
+		Fire = NOOP
 	},
 	})
 	return Returns :: BLINK_EVENTS_SYMBOL
@@ -409,7 +434,7 @@ Unreliable.OnClientEvent:Connect(function(Buffer: buffer, Instances: {Instance})
 				Events.Unreliable[0](Value)
 			end
 		elseif Index == 1 then
-			local Value: { States: {[string]: any} } = ReadEVENT_stateSync()
+			local Value: { States: {[string]: any} } = ReadEVENT_StateSync()
 			if Events.Unreliable[1] ~= nil then
 				task.spawn(Events.Unreliable[1], Value)
 			end
@@ -510,6 +535,17 @@ local Returns = table.freeze({
 					Events.Unreliable[1] = nil
 				end
 			end
+		end
+	},
+	UpdateMouse = {
+		Fire = function(Value: { MouseHit: Vector3, MouseUnit: Vector3, Origin: Vector3, MouseScreenPosition: Vector3 }): ()
+			local Previous = Save()
+			Load()
+			WriteEVENT_UpdateMouse(Value)
+			local Buffer = buffer.create(SendCursor)
+			buffer.copy(Buffer, 0, SendBuffer, 0, SendCursor)
+			Unreliable:FireServer(Buffer, SendInstances)
+			Load(Previous)
 		end
 	},
 })

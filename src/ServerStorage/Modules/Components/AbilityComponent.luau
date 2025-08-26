@@ -4,8 +4,6 @@
 local BaseComponent = require(script.Parent.BaseComponent)
 local CharacterTypes = require(game.ServerStorage.Modules.Types.CharacterTypes)
 local AbilityTypes = require(game.ServerStorage.Modules.Types.AbilityTypes)
-local ClientAbilityTypes = require(game.ReplicatedStorage.Modules.Types.AbilityTypes)
-local Enums = require(game.ReplicatedStorage.Modules.Types.Enums)
 
 local CENTERALIZED_COOLDOWNS : {[Player] : {[string]: number}} = {}
 
@@ -452,7 +450,13 @@ function AbilityComponent:_ExecuteAbility(player: Player, characterData: Charact
             abilityModule.Server.InternalState.Cooldowns = CENTERALIZED_COOLDOWNS
         end
 
-        local success = abilityModule.Server:Validate(player, ctxExtra)
+        local function onHit(model : Model)
+            -- Handle hit logic here
+            print(model)
+        end
+
+        -- Server validation - characterData already has mouse position in Components.Mouse
+        local success = abilityModule.Server:Validate(player, onHit, characterData)
         if success then
             -- Fire network event for client replication
             local _NetworkServer = require(game.ReplicatedStorage.Modules.Network.Server)
@@ -465,7 +469,7 @@ function AbilityComponent:_ExecuteAbility(player: Player, characterData: Charact
                     Position = player.Character and player.Character.PrimaryPart and player.Character.PrimaryPart.Position :: Vector3,
                     Direction = player.Character and player.Character.PrimaryPart and player.Character.PrimaryPart.CFrame.LookVector :: Vector3,
                     CharacterName = player.Character and player.Character.Name :: string
-                })
+                } :: any)
             end
         end
         return success

@@ -154,6 +154,7 @@ local Queue: any = {
 Queue.Reliable[4] = table.create(256)
 Queue.Reliable[5] = table.create(256)
 Queue.Reliable[6] = table.create(256)
+Queue.Unreliable[2] = table.create(256)
 local function WriteEVENT_SetCharacter(Value: string): ()
 	-- Allocate BLOCK: 3 bytes
 	local BLOCK_START = Allocate(3)
@@ -271,7 +272,7 @@ local function ReadEVENT_RequestAbilityCast(): ({ AbilityId: number, Target: Mod
 	return Value
 end
 
-local function WriteEVENT_stateSync(Value: { States: {[string]: any} }): ()
+local function WriteEVENT_StateSync(Value: { States: {[string]: any} }): ()
 	-- Allocate BLOCK: 3 bytes
 	local BLOCK_START = Allocate(3)
 	buffer.writeu8(SendBuffer, BLOCK_START + 0, 1)
@@ -286,6 +287,29 @@ local function WriteEVENT_stateSync(Value: { States: {[string]: any} }): ()
 		table.insert(SendInstances, if Element_1 == nil then Null else Element_1)
 	end
 	buffer.writeu16(SendBuffer, BLOCK_START + 1, Elements_1)
+end
+
+local function ReadEVENT_UpdateMouse(): ({ MouseHit: Vector3, MouseUnit: Vector3, Origin: Vector3, MouseScreenPosition: Vector3 })
+	-- Read BLOCK: 48 bytes
+	local BLOCK_START = Read(48)
+	local Value = {} :: any
+	local X = buffer.readf32(RecieveBuffer, BLOCK_START + 0)
+	local Y = buffer.readf32(RecieveBuffer, BLOCK_START + 4)
+	local Z = buffer.readf32(RecieveBuffer, BLOCK_START + 8)
+	Value.MouseHit = Vector3.new(X, Y, Z)
+	X = buffer.readf32(RecieveBuffer, BLOCK_START + 12)
+	Y = buffer.readf32(RecieveBuffer, BLOCK_START + 16)
+	Z = buffer.readf32(RecieveBuffer, BLOCK_START + 20)
+	Value.MouseUnit = Vector3.new(X, Y, Z)
+	X = buffer.readf32(RecieveBuffer, BLOCK_START + 24)
+	Y = buffer.readf32(RecieveBuffer, BLOCK_START + 28)
+	Z = buffer.readf32(RecieveBuffer, BLOCK_START + 32)
+	Value.Origin = Vector3.new(X, Y, Z)
+	X = buffer.readf32(RecieveBuffer, BLOCK_START + 36)
+	Y = buffer.readf32(RecieveBuffer, BLOCK_START + 40)
+	Z = buffer.readf32(RecieveBuffer, BLOCK_START + 44)
+	Value.MouseScreenPosition = Vector3.new(X, Y, Z)
+	return Value
 end
 
 if not RunService:IsRunning() then
@@ -335,6 +359,9 @@ if not RunService:IsRunning() then
 		FireAll = NOOP,
 		FireList = NOOP,
 		FireExcept = NOOP
+	},
+	UpdateMouse = {
+		On = NOOP
 	},
 	})
 	return Returns :: BLINK_EVENTS_SYMBOL
@@ -436,6 +463,12 @@ Unreliable.OnServerEvent:Connect(function(Player: Player, Buffer: buffer, Instan
 		-- Read BLOCK: 1 bytes
 		local BLOCK_START = Read(1)
 		local Index = buffer.readu8(RecieveBuffer, BLOCK_START + 0)
+		if Index == 2 then
+			local Value: { MouseHit: Vector3, MouseUnit: Vector3, Origin: Vector3, MouseScreenPosition: Vector3 } = ReadEVENT_UpdateMouse()
+			if Events.Unreliable[2] ~= nil then
+				task.spawn(Events.Unreliable[2], Player, Value)
+			end
+		end
 	end
 end)
 
@@ -706,24 +739,24 @@ local Returns = table.freeze({
 			end
 		end
 	},
-	stateSync = {
+	StateSync = {
 		Fire = function(Player: Player, Value: { States: {[string]: any} }): ()
 			Load()
-			WriteEVENT_stateSync(Value)
+			WriteEVENT_StateSync(Value)
 			local Buffer = buffer.create(SendCursor)
 			buffer.copy(Buffer, 0, SendBuffer, 0, SendCursor)
 			Unreliable:FireClient(Player, Buffer, SendInstances)
 		end,
 		FireAll = function(Value: { States: {[string]: any} }): ()
 			Load()
-			WriteEVENT_stateSync(Value)
+			WriteEVENT_StateSync(Value)
 			local Buffer = buffer.create(SendCursor)
 			buffer.copy(Buffer, 0, SendBuffer, 0, SendCursor)
 			Unreliable:FireAllClients(Buffer, SendInstances)
 		end,
 		FireList = function(List: {Player}, Value: { States: {[string]: any} }): ()
 			Load()
-			WriteEVENT_stateSync(Value)
+			WriteEVENT_StateSync(Value)
 			local Buffer = buffer.create(SendCursor)
 			buffer.copy(Buffer, 0, SendBuffer, 0, SendCursor)
 			for _, Player in List do
@@ -732,7 +765,7 @@ local Returns = table.freeze({
 		end,
 		FireExcept = function(Except: Player, Value: { States: {[string]: any} }): ()
 			Load()
-			WriteEVENT_stateSync(Value)
+			WriteEVENT_StateSync(Value)
 			local Buffer = buffer.create(SendCursor)
 			buffer.copy(Buffer, 0, SendBuffer, 0, SendCursor)
 			for _, Player in Players:GetPlayers() do
@@ -742,6 +775,16 @@ local Returns = table.freeze({
 				Unreliable:FireClient(Player, Buffer, SendInstances)
 			end
 		end,
+	},
+	UpdateMouse = {
+		On = function(Listener: (Player: Player, Value: { MouseHit: Vector3, MouseUnit: Vector3, Origin: Vector3, MouseScreenPosition: Vector3 }) -> ()): () -> ()
+			Events.Unreliable[2] = Listener
+			return function (): ()
+				if Events.Unreliable[2] == Listener then
+					Events.Unreliable[2] = nil
+				end
+			end
+		end
 	},
 })
 type BLINK_EVENTS_SYMBOL = typeof(Returns)

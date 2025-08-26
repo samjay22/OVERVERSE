@@ -36,6 +36,7 @@ local COMPONENT_NAMES = {
     ABILITY = "Ability",
     WEAPON = "Weapon",
     INPUT = "Input",
+    MOUSE = "Mouse",
 }
 
 local DEFAULT_CONFIG = {
@@ -293,6 +294,7 @@ function CharacterManager:_RegisterBuiltinComponents()
         [COMPONENT_NAMES.INPUT] = componentPath.InputComponent,
         [COMPONENT_NAMES.ABILITY] = componentPath.AbilityComponent,
         [COMPONENT_NAMES.WEAPON] = componentPath.WeaponComponent,
+        [COMPONENT_NAMES.MOUSE] = componentPath.MouseComponent,
     }
     
     for name, path in pairs(components) do

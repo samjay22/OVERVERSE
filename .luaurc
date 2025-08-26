@@ -20,6 +20,7 @@
 		"MouseTargetTypes": "./src/ReplicatedStorage/Modules/Types/MouseTargetTypes.luau",
 		"NetworkTypes": "./src/ReplicatedStorage/Modules/Types/NetworkTypes.luau",
 		"PredictionTypes": "./src/ReplicatedStorage/Modules/Types/PredictionTypes.luau",
+		"AbilityStateMachine": "./src/ReplicatedStorage/Modules/Utility/AbilityStateMachine.luau",
 		"BindableEventHelper": "./src/ReplicatedStorage/Modules/Utility/BindableEventHelper.luau",
 		"CameraShakeManager": "./src/ReplicatedStorage/Modules/Utility/CameraShakeManager.luau",
 		"CameraShakeInstance": "./src/ReplicatedStorage/Modules/Utility/CameraShaker/CameraShakeInstance.luau",
@@ -33,6 +34,7 @@
 		"Spring": "./src/ReplicatedStorage/Modules/Utility/Spring.luau",
 		"StateManager": "./src/ReplicatedStorage/Modules/Utility/StateManager.luau",
 		"TargetValidator": "./src/ReplicatedStorage/Modules/Utility/TargetValidator.luau",
+		"InputHandler": "./src/ServerScriptService/Network/InputHandler.server.luau",
 		"AbilityManager": "./src/ServerScriptService/Scripts/AbilityManager.server.luau",
 		"AssetInitializer": "./src/ServerScriptService/Scripts/AssetInitializer.server.luau",
 		"CharacterManager": "./src/ServerScriptService/Scripts/CharacterManager.server.luau",
@@ -73,7 +75,6 @@
 		"ObjectPool": "./src/ServerStorage/Modules/Systems/ObjectPool.luau",
 		"PerformanceMonitor": "./src/ServerStorage/Modules/Systems/PerformanceMonitor.luau",
 		"UpdateScheduler": "./src/ServerStorage/Modules/Systems/UpdateScheduler.luau",
-		"ComponentTest": "./src/ServerStorage/Modules/Tests/ComponentTest.luau",
 		"CharacterStateTypes": "./src/ServerStorage/Modules/Types/CharacterStateTypes.luau",
 		"CharacterTypes": "./src/ServerStorage/Modules/Types/CharacterTypes.luau",
 		"CombatEventTypes": "./src/ServerStorage/Modules/Types/CombatEventTypes.luau",
@@ -98,11 +99,12 @@
 		"Spear": "./src/ServerStorage/Modules/registery/Weapons/Spear.luau",
 		"Sword": "./src/ServerStorage/Modules/registery/Weapons/Sword.luau",
 		"CameraController": "./src/StarterPlayerScripts/CameraController.client.luau",
+		"ClientController": "./src/StarterPlayerScripts/ClientController.client.luau",
 		"MouseController": "./src/StarterPlayerScripts/MouseController.client.luau",
 		"MovementAnimationHandler": "./src/StarterPlayerScripts/MovementAnimationHandler.client.luau",
-		"InputHandler": "./src/ServerScriptService/Network/InputHandler.server.luau",
-		"ClientController": "./src/StarterPlayerScripts/ClientController.client.luau",
-		"AbilityStateMachine": "./src/ReplicatedStorage/Modules/Utility/AbilityStateMachine.luau",
-		"M1_Optimized": "./src/ReplicatedStorage/Modules/Abilities/Rem/M1_Optimized.luau"
+		"CameraWalkHandler": "./src/StarterPlayerScripts/CameraWalkHandler.luau",
+		"MouseComponent": "./src/ServerStorage/Modules/Components/MouseComponent.luau",
+		"MouseTracker": "./src/StarterPlayerScripts/MouseTracker.client.luau",
+		"M1RaycastTest": "./src/ServerScriptService/M1RaycastTest.server.luau"
 	}
 }
