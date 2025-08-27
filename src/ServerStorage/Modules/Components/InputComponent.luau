@@ -136,10 +136,25 @@ function InputComponent:_ProcessCombatInputs(characterData: CharacterTypes.inter
         -- Get player from characterData
         local player = characterData.Player or (characterData.PlayerId and game.Players:GetPlayerByUserId(characterData.PlayerId))
         
-        if player and AbilityComponent.M1 then
-            -- MouseComponent already updates characterData with mouse position
-            -- No need to pass it separately
-            AbilityComponent.M1(player, Enums.AttackType.Default)
+        if player and AbilityComponent then
+            -- Try to activate M1 ability
+            local abilityData = characterData.Components.Ability
+            if abilityData and abilityData.Loadout and abilityData.Loadout.primaryAttacks then
+                local m1AbilityId = abilityData.Loadout.primaryAttacks[1]
+                if m1AbilityId then
+                    -- Get target data from MouseComponent
+                    local targetData = nil
+                    if characterData.Components.Mouse then
+                        local mouseComponent = characterData.Components.Mouse
+                        targetData = {
+                            position = mouseComponent.MouseHitPosition,
+                            target = mouseComponent.MouseTarget,
+                            normal = mouseComponent.MouseHitNormal
+                        }
+                    end
+                    AbilityComponent:Activate(player, m1AbilityId, targetData)
+                end
+            end
         elseif CombatComponent.PerformAttack then
             CombatComponent.PerformAttack(characterData, Enums.AttackType.Default)
         end
@@ -149,8 +164,25 @@ function InputComponent:_ProcessCombatInputs(characterData: CharacterTypes.inter
     local hasM2 = keys[OFFSET + Enum.UserInputType.MouseButton2.Value] == true
     local player = characterData.Player or (characterData.PlayerId and game.Players:GetPlayerByUserId(characterData.PlayerId))
     
-    if player and AbilityComponent.M2 then
-        AbilityComponent.M2(player, hasM2)
+    if hasM2 and player and AbilityComponent then
+        -- Try to activate M2 ability  
+        local abilityData = characterData.Components.Ability
+        if abilityData and abilityData.Loadout and abilityData.Loadout.primaryAttacks then
+            local m2AbilityId = abilityData.Loadout.primaryAttacks[2]
+            if m2AbilityId then
+                -- Get target data from MouseComponent
+                local targetData = nil
+                if characterData.Components.Mouse then
+                    local mouseComponent = characterData.Components.Mouse
+                    targetData = {
+                        position = mouseComponent.MouseHitPosition,
+                        target = mouseComponent.MouseTarget,
+                        normal = mouseComponent.MouseHitNormal
+                    }
+                end
+                AbilityComponent:Activate(player, m2AbilityId, targetData)
+            end
+        end
     elseif CombatComponent.PerformBlock then
         CombatComponent.PerformBlock(characterData, hasM2)
     end
@@ -171,11 +203,11 @@ function InputComponent:_ProcessAbilityInputs(characterData: CharacterTypes.inte
     
     local player = characterData.Player or (characterData.PlayerId and game.Players:GetPlayerByUserId(characterData.PlayerId))
     
-    if not player or not AbilityComponent.GetLoadout then
+    if not player or not AbilityComponent then
         return
     end
     
-    local loadout = AbilityComponent.GetLoadout(characterData.PlayerId)
+    local loadout = AbilityComponent:GetLoadout(characterData.PlayerId)
     local activeIds = (loadout and loadout.actives) or {}
     
     if #activeIds == 0 then
@@ -202,8 +234,18 @@ function InputComponent:_ProcessAbilityInputs(characterData: CharacterTypes.inte
         local wasDown = prev[slot] == true
         if down and not wasDown then
             local abilityId = activeIds[slot]
-            if abilityId and AbilityComponent.Activate then
-                AbilityComponent.Activate(player, abilityId, nil)
+            if abilityId and AbilityComponent then
+                -- Get target data from MouseComponent
+                local targetData = nil
+                if characterData.Components.Mouse then
+                    local mouseComponent = characterData.Components.Mouse
+                    targetData = {
+                        position = mouseComponent.MouseHitPosition,
+                        target = mouseComponent.MouseTarget,
+                        normal = mouseComponent.MouseHitNormal
+                    }
+                end
+                AbilityComponent:Activate(player, abilityId, targetData)
             end
         end
         

@@ -1,44 +1,98 @@
 --!strict
--- Ability Component - Self-contained component for managing character abilities
+-- Ability Component - Rewritten to use the new scalable ability system
 
 local BaseComponent = require(script.Parent.BaseComponent)
 local CharacterTypes = require(game.ServerStorage.Modules.Types.CharacterTypes)
 local AbilityTypes = require(game.ServerStorage.Modules.Types.AbilityTypes)
 
-local CENTERALIZED_COOLDOWNS : {[Player] : {[string]: number}} = {}
+-- New Ability System
+local AbilitySystemPath = game.ServerStorage.Modules.Core.AbilitySystem
+local Types = require(AbilitySystemPath.Types)
+local AbilityRegistry = require(AbilitySystemPath.AbilityRegistry)
+local EffectComposer = require(AbilitySystemPath.EffectComposer)
+local AbilityModifierSystem = require(AbilitySystemPath.AbilityModifierSystem)
+local AbilityComboSystem = require(AbilitySystemPath.AbilityComboSystem)
+local CooldownManager = require(AbilitySystemPath.CooldownManager)
+local TargetingSystem = require(AbilitySystemPath.TargetingSystem)
+local NetworkManager = require(game.ReplicatedStorage.Modules.Network.Server)
+
+type AbilityInstance = Types.AbilityInstance
+type AbilityDefinition = Types.AbilityDefinition
 
 type AbilityComponentData = {
     Loadout: AbilityTypes.Loadout,
-    Cooldowns: { [string]: number },
-    ActiveAbilities: { [string]: boolean },
-    LastActivation: { [string]: number },
-    PassiveModifiers: {[string]: number},
+    AbilityInstances: {[string]: AbilityInstance},
     KeyBindings: {[string]: string?},
-    LastCooldownCheck: number,
+    ActiveChannels: {[string]: thread?},
+    LastInputTime: number,
+    ComboWindow: number,
 }
 
 export type AbilityComponent = BaseComponent.BaseComponent & {
-    Activate: (self: AbilityComponent, player: Player, abilityId: string, ctxExtra: {[string]: any}?) -> boolean,
+    Activate: (self: AbilityComponent, player: Player, abilityId: string, targetData: any?) -> boolean,
     HandleInput: (self: AbilityComponent, player: Player, action: string, isDown: boolean, meta: {[string]: any}?) -> boolean,
     GetLoadout: (self: AbilityComponent, playerId: number) -> AbilityTypes.Loadout?,
     SetLoadout: (self: AbilityComponent, characterData: CharacterTypes.internalCharacter, loadout: AbilityTypes.Loadout) -> (),
     RemapBinding: (self: AbilityComponent, player: Player, binding: string, abilityId: string?) -> boolean,
     IsOnCooldown: (self: AbilityComponent, characterData: CharacterTypes.internalCharacter, abilityId: string) -> boolean,
     GetCooldownRemaining: (self: AbilityComponent, characterData: CharacterTypes.internalCharacter, abilityId: string) -> number,
+    ApplyModifier: (self: AbilityComponent, characterData: CharacterTypes.internalCharacter, modifier: Types.AbilityModifier) -> (),
+    GetComboCount: (self: AbilityComponent, characterData: CharacterTypes.internalCharacter) -> number,
 }
+
+-- System singletons (initialized lazily)
+local registry = nil
+local effectComposer = nil
+local modifierSystem = nil
+local comboSystem = nil
+local cooldownManager = nil
+local targetingSystem = nil
+
+local function getRegistry()
+    if not registry then
+        registry = AbilityRegistry.get()
+    end
+    return registry
+end
+
+local function getEffectComposer()
+    if not effectComposer then
+        effectComposer = EffectComposer.get()
+    end
+    return effectComposer
+end
+
+local function getModifierSystem()
+    if not modifierSystem then
+        modifierSystem = AbilityModifierSystem.get()
+    end
+    return modifierSystem
+end
+
+local function getComboSystem()
+    if not comboSystem then
+        comboSystem = AbilityComboSystem.get()
+    end
+    return comboSystem
+end
+
+local function getCooldownManager()
+    if not cooldownManager then
+        cooldownManager = CooldownManager.get()
+    end
+    return cooldownManager
+end
+
+local function getTargetingSystem()
+    if not targetingSystem then
+        targetingSystem = TargetingSystem.get()
+    end
+    return targetingSystem
+end
 
 -- Constants
-local OFFSET = 100000
 local SLOT_KEYS = {"Q", "E", "R", "F"}
-
--- Passive ability modifiers
-local PASSIVE_MODIFIERS = {
-    Keen = {
-        CriticalChance = 0.15,
-        CriticalDamage = 0.25,
-    },
-    -- Add more passive abilities here
-}
+local DEFAULT_COMBO_WINDOW = 2.0
 
 -- Store component instances by player ID for quick access
 local componentsByPlayerId: {[number]: AbilityComponentData} = {}
@@ -53,37 +107,43 @@ function AbilityComponent:Initialize(characterData: CharacterTypes.internalChara
     if config and (config :: any).AbilityLoadout then
         loadout = (config :: any).AbilityLoadout
     else
-        -- Try to get loadout based on character class
         local Constants = require(game.ReplicatedStorage.Modules.Utility.Constants)
-        local LoadoutRegistry = require(game.ServerStorage.Modules.registery.Loadouts)
-        
+        local LoadoutRegistry = require(game.ServerStorage.Modules.registry.Loadouts)
         local classId = characterData.ClassId or Constants.CHARACTER_ASSET_DEFAULT
         loadout = LoadoutRegistry.Get(classId)
     end
     
     local componentData: AbilityComponentData = {
         Loadout = loadout,
-        Cooldowns = {},
-        ActiveAbilities = {},
-        LastActivation = {},
-        PassiveModifiers = {},
+        AbilityInstances = {},
         KeyBindings = {},
-        LastCooldownCheck = 0,
+        ActiveChannels = {},
+        LastInputTime = 0,
+        ComboWindow = DEFAULT_COMBO_WINDOW,
     }
     
     characterData.Components.Ability = componentData :: any
-    
-    -- Store in global registry for quick access
     componentsByPlayerId[characterData.PlayerId] = componentData
     
-    -- Apply passive abilities if any
-    if loadout.passive then
-        self:_ApplyPassiveModifiers(characterData, loadout.passive, true)
+    -- Clear any existing cooldowns for this character (in case of respawn/reinit)
+    if characterData.Character then
+        getCooldownManager():clearEntityCooldowns(characterData.Character)
+        getComboSystem():clearComboState(characterData.Character)
+        getModifierSystem():clearAllModifiers(characterData.Character)
     end
     
-    -- Initialize key bindings in state manager
+    -- Initialize abilities from loadout
+    self:_InitializeAbilities(characterData, componentData)
+    
+    -- Apply passive modifiers
+    if loadout.passive then
+        self:_ApplyPassiveAbility(characterData, loadout.passive)
+    end
+    
+    -- Initialize state
     characterData.StateManager:Set("KeyBindings", {})
     characterData.StateManager:Set("PassiveModifiers", {})
+    characterData.StateManager:Set("ComboCount", 0)
 end
 
 function AbilityComponent:Update(characterData: CharacterTypes.internalCharacter, dt: number)
@@ -96,45 +156,46 @@ function AbilityComponent:Update(characterData: CharacterTypes.internalCharacter
         return
     end
     
-    local currentTime = tick()
+    -- Update combo state
+    local comboSystem = getComboSystem()
+    characterData.StateManager:Set("ComboCount", comboSystem:getComboCount(characterData.Character))
     
-    -- Update cooldowns (check every 0.1 seconds to reduce overhead)
-    if currentTime - component.LastCooldownCheck > 0.1 then
-        component.LastCooldownCheck = currentTime
-        
-        for abilityId, cooldownEnd in pairs(component.Cooldowns) do
-            if currentTime >= cooldownEnd then
-                component.Cooldowns[abilityId] = nil
-            end
-        end
-    end
-    
-    -- Update active ability durations if needed
-    for abilityId, isActive in pairs(component.ActiveAbilities) do
-        if isActive then
-            local lastActivation = component.LastActivation[abilityId] or 0
-            local duration = self:_GetAbilityDuration(abilityId)
-            if duration and (currentTime - lastActivation) > duration then
-                component.ActiveAbilities[abilityId] = false
-            end
+    -- Check for expired channels
+    for abilityId, thread in pairs(component.ActiveChannels) do
+        if thread and coroutine.status(thread) == "dead" then
+            component.ActiveChannels[abilityId] = nil
         end
     end
 end
 
 function AbilityComponent:Cleanup(characterData: CharacterTypes.internalCharacter)
-    -- Remove from global registry
-    componentsByPlayerId[characterData.PlayerId] = nil
-    
-    -- Remove passive effects if any
     local component = characterData.Components.Ability :: AbilityComponentData
-    if component and component.Loadout.passive then
-        self:_ApplyPassiveModifiers(characterData, component.Loadout.passive, false)
+    if component then
+        -- Cancel active channels
+        for _, thread in pairs(component.ActiveChannels) do
+            if thread and coroutine.status(thread) ~= "dead" then
+                task.cancel(thread)
+            end
+        end
+        
+        -- Clear cooldowns
+        local cooldownManager = getCooldownManager()
+        cooldownManager:clearEntityCooldowns(characterData.Character)
+
+        -- Clear combo state
+        local comboSystem = getComboSystem()
+        comboSystem:clearComboState(characterData.Character)
+
+        -- Clear modifiers
+        local modifierSystem = getModifierSystem()
+        modifierSystem:clearAllModifiers(characterData.Character)
     end
     
+    componentsByPlayerId[characterData.PlayerId] = nil
     BaseComponent.Cleanup(self, characterData)
 end
 
-function AbilityComponent:Activate(player: Player, abilityId: string, ctxExtra: {[string]: any}?): boolean
+function AbilityComponent:Activate(player: Player, abilityId: string, targetData: any?): boolean
     local characterData = self:_GetCharacterData(player)
     if not characterData then
         return false
@@ -145,48 +206,34 @@ function AbilityComponent:Activate(player: Player, abilityId: string, ctxExtra: 
         return false
     end
     
-    -- Check if already casting
-    if characterData.StateManager:Get("CastingAbility") then
-        return false
+    -- Get ability instance
+    local instance = component.AbilityInstances[abilityId]
+    if not instance then
+        -- Try to create instance if ability exists in registry
+        instance = self:_CreateAbilityInstance(characterData, abilityId)
+        if not instance then
+            warn(`[AbilityComponent] Ability not found: {abilityId}`)
+            return false
+        end
     end
     
-    -- Check if ability exists in loadout
-    if not self:_HasAbility(component, abilityId) then
-        return false
-    end
-    
-    -- Check cooldown
-    if self:IsOnCooldown(characterData, abilityId) then
-        return false
-    end
-    
-    -- Check if player is alive and not stunned
-    local isStunned = characterData.StateManager:Get("IsStunned")
-    local isDead = characterData.StateManager:Get("IsDead")
-    if isStunned or isDead then
+    -- Check if can cast
+    local canCast, reason = self:_CanCast(characterData, instance, targetData)
+    if not canCast then
+        -- Send failure feedback to player if needed
         return false
     end
     
     -- Set casting state
     characterData.StateManager:Set("CastingAbility", true)
+    characterData.StateManager:Set("CurrentAbility", abilityId)
     
-    -- Execute the ability
-    local success = self:_ExecuteAbility(player, characterData, abilityId, ctxExtra)
-    
-    if success then
-        -- Mark as active
-        component.ActiveAbilities[abilityId] = true
-        component.LastActivation[abilityId] = tick()
-        
-        -- Start cooldown
-        local cooldown = self:_GetAbilityCooldown(abilityId)
-        if cooldown and cooldown > 0 then
-            component.Cooldowns[abilityId] = tick() + cooldown
-        end
-    end
+    -- Execute ability
+    local success = self:_ExecuteAbility(characterData, instance, targetData)
     
     -- Clear casting state
     characterData.StateManager:Set("CastingAbility", false)
+    characterData.StateManager:Set("CurrentAbility", nil)
     
     return success
 end
@@ -197,10 +244,16 @@ function AbilityComponent:HandleInput(player: Player, action: string, isDown: bo
         return false
     end
     
-    -- Update last input timestamp
-    characterData.StateManager:Set("LastInputTS", (meta and meta.tsServer) or os.time())
+    local component = characterData.Components.Ability :: AbilityComponentData
+    if not component then
+        return false
+    end
     
-    -- Route to appropriate handler
+    -- Update input time
+    component.LastInputTime = os.clock()
+    characterData.StateManager:Set("LastInputTS", meta and meta.tsServer or os.time())
+    
+    -- Handle different input types
     if action == "M1" then
         return self:_HandleM1(player, characterData, isDown, meta)
     elseif action == "M2" then
@@ -208,7 +261,7 @@ function AbilityComponent:HandleInput(player: Player, action: string, isDown: bo
     elseif string.sub(action, 1, 4) == "Slot" then
         return self:_HandleSlot(player, characterData, action, isDown, meta)
     else
-        -- Try to activate as ability
+        -- Try direct ability activation
         if isDown then
             return self:Activate(player, action, meta)
         end
@@ -218,13 +271,11 @@ function AbilityComponent:HandleInput(player: Player, action: string, isDown: bo
 end
 
 function AbilityComponent:GetLoadout(playerId: number): AbilityTypes.Loadout?
-    -- Get from component registry
     local componentData = componentsByPlayerId[playerId]
     if componentData then
         return componentData.Loadout
     end
     
-    -- Try to get from character data if not in registry yet
     local CharacterManager = require(game.ServerStorage.Modules.Entities.Character.CharacterManager)
     local characterData = CharacterManager:GetCharacterData(playerId) :: any
     if characterData and characterData.Components and characterData.Components.Ability then
@@ -232,9 +283,7 @@ function AbilityComponent:GetLoadout(playerId: number): AbilityTypes.Loadout?
         return component.Loadout
     end
     
-    -- Return default loadout as fallback
-    local LoadoutRegistry = require(game.ServerStorage.Modules.registery.Loadouts)
-    return LoadoutRegistry.Get("Default")
+    return nil
 end
 
 function AbilityComponent:SetLoadout(characterData: CharacterTypes.internalCharacter, loadout: AbilityTypes.Loadout)
@@ -243,26 +292,23 @@ function AbilityComponent:SetLoadout(characterData: CharacterTypes.internalChara
         return
     end
     
-    -- Remove old passive if any
-    if component.Loadout.passive then
-        self:_ApplyPassiveModifiers(characterData, component.Loadout.passive, false)
+    -- Clear old abilities and cooldowns
+    if characterData.Character then
+        local cooldownManager = getCooldownManager()
+        cooldownManager:clearEntityCooldowns(characterData.Character)
     end
+    component.AbilityInstances = {}
     
     -- Update loadout
     component.Loadout = loadout
     componentsByPlayerId[characterData.PlayerId] = component
     
-    -- Apply new passive if any
-    if loadout.passive then
-        self:_ApplyPassiveModifiers(characterData, loadout.passive, true)
-    end
+    -- Initialize new abilities
+    self:_InitializeAbilities(characterData, component)
     
-    -- Clear cooldowns for abilities not in new loadout
-    for abilityId in pairs(component.Cooldowns) do
-        if not self:_HasAbility(component, abilityId) then
-            component.Cooldowns[abilityId] = nil
-            component.ActiveAbilities[abilityId] = nil
-        end
+    -- Apply new passive
+    if loadout.passive then
+        self:_ApplyPassiveAbility(characterData, loadout.passive)
     end
 end
 
@@ -277,86 +323,909 @@ function AbilityComponent:RemapBinding(player: Player, binding: string, abilityI
         return false
     end
     
-    -- Handle M1/M2 bindings
-    if binding == "M1" or binding == "M2" then
-        component.KeyBindings[binding .. "Ability"] = abilityId
-        
-        local binds = table.clone(characterData.StateManager:Get("KeyBindings") or {})
-        binds[binding .. "Ability"] = abilityId
-        characterData.StateManager:Set("KeyBindings", binds)
-        return true
+    component.KeyBindings[binding] = abilityId
+    
+    local binds = table.clone(characterData.StateManager:Get("KeyBindings") or {})
+    binds[binding] = abilityId
+    characterData.StateManager:Set("KeyBindings", binds)
+    
+    return true
+end
+
+function AbilityComponent:IsOnCooldown(characterData: CharacterTypes.internalCharacter, abilityId: string): boolean
+    local cooldownManager = getCooldownManager()
+    return cooldownManager:isOnCooldown(characterData.Character, abilityId)
+end
+
+function AbilityComponent:GetCooldownRemaining(characterData: CharacterTypes.internalCharacter, abilityId: string): number
+    local cooldownManager = getCooldownManager()
+    return cooldownManager:getCooldownRemaining(characterData.Character, abilityId)
+end
+
+function AbilityComponent:ApplyModifier(characterData: CharacterTypes.internalCharacter, modifier: Types.AbilityModifier)
+    local modifierSystem = getModifierSystem()
+    modifierSystem:applyModifier(characterData.Character, modifier)
+
+    -- Recalculate all ability stats
+    local component = characterData.Components.Ability :: AbilityComponentData
+    if component then
+        for _, instance in pairs(component.AbilityInstances) do
+            self:_RecalculateAbilityStats(instance)
+        end
+    end
+end
+
+function AbilityComponent:GetComboCount(characterData: CharacterTypes.internalCharacter): number
+    local comboSystem = getComboSystem()
+    return comboSystem:getComboCount(characterData.Character)
+end
+
+-- Private helper methods
+
+-- Helper function to safely get numeric values from StateManager
+local function getNumericState(stateManager: any, key: string, defaultValue: number): number
+    local value = stateManager:Get(key)
+    return (typeof(value) == "number" and value or defaultValue) :: number
+end
+
+function AbilityComponent:_InitializeAbilities(characterData: CharacterTypes.internalCharacter, component: AbilityComponentData)
+    -- Initialize primary attacks
+    if component.Loadout.primaryAttacks then
+        for _, abilityId in ipairs(component.Loadout.primaryAttacks) do
+            self:_CreateAbilityInstance(characterData, abilityId)
+        end
     end
     
-    -- Handle slot bindings
-    local slot = tonumber(string.sub(binding, 5))
-    if slot and slot >= 1 and slot <= 4 then
-        local newLoadout = table.clone(component.Loadout)
-        newLoadout.actives = table.clone(newLoadout.actives or {})
-        newLoadout.actives[slot] = abilityId
-        self:SetLoadout(characterData, newLoadout)
-        return true
+    -- Initialize active abilities
+    if component.Loadout.actives then
+        for slot, abilityId in ipairs(component.Loadout.actives) do
+            if abilityId then
+                local instance = self:_CreateAbilityInstance(characterData, abilityId)
+                if instance then
+                    instance.definition.slot = SLOT_KEYS[slot]
+                end
+            end
+        end
+    end
+end
+
+function AbilityComponent:_CreateAbilityInstance(characterData: CharacterTypes.internalCharacter, abilityId: string): AbilityInstance?
+    local component = characterData.Components.Ability :: AbilityComponentData
+    if not component then
+        return nil
+    end
+    
+    -- Check if already exists
+    if component.AbilityInstances[abilityId] then
+        return component.AbilityInstances[abilityId]
+    end
+    
+    -- Get definition from registry
+    local registry = getRegistry()
+    local definition = registry:getDefinition(abilityId)
+    if not definition then
+        -- Try legacy format
+        local className = characterData.ClassName or "Rem"
+        local legacyId = `{className}_{abilityId}`
+        definition = registry:getDefinition(legacyId)
+        
+        if not definition then
+            return nil
+        end
+    end
+    
+    -- Initialize resources for abilities that use them (only if they don't exist)
+    if definition.resources then
+        for _, resource in ipairs(definition.resources) do
+            local amount = type(resource.amount) == "table" and resource.amount.base or resource.amount
+            
+            if resource.type == "Ammo" then
+                -- Only initialize if not already set
+                if characterData.StateManager:Get("CurrentAmmo") == nil then
+                    characterData.StateManager:Set("CurrentAmmo", amount)
+                    characterData.StateManager:Set("MaxAmmo", amount)
+                end
+                
+                -- Handle custom reload data
+                if definition.customData and definition.customData.reloadTime then
+                    characterData.StateManager:Set("ReloadTime", definition.customData.reloadTime)
+                end
+            elseif resource.type == "Mana" then
+                if characterData.StateManager:Get("CurrentMana") == nil then
+                    characterData.StateManager:Set("CurrentMana", amount)
+                    characterData.StateManager:Set("MaxMana", amount)
+                end
+            elseif resource.type == "Energy" then
+                if characterData.StateManager:Get("CurrentEnergy") == nil then
+                    characterData.StateManager:Set("CurrentEnergy", amount)
+                    characterData.StateManager:Set("MaxEnergy", amount)
+                end
+            elseif resource.type == "Rage" then
+                if characterData.StateManager:Get("CurrentRage") == nil then
+                    characterData.StateManager:Set("CurrentRage", 0) -- Rage usually starts at 0
+                    characterData.StateManager:Set("MaxRage", amount)
+                end
+            elseif resource.type == "Focus" then
+                if characterData.StateManager:Get("CurrentFocus") == nil then
+                    characterData.StateManager:Set("CurrentFocus", amount)
+                    characterData.StateManager:Set("MaxFocus", amount)
+                end
+            elseif resource.type == "Charges" then
+                if characterData.StateManager:Get("CurrentCharges") == nil then
+                    characterData.StateManager:Set("CurrentCharges", amount)
+                    characterData.StateManager:Set("MaxCharges", amount)
+                end
+            elseif resource.type == "Custom" then
+                local customKey = `Current{resource.type}`
+                if characterData.StateManager:Get(customKey) == nil then
+                    characterData.StateManager:Set(customKey, amount)
+                    characterData.StateManager:Set(`Max{resource.type}`, amount)
+                end
+            end
+        end
+    end
+    
+    -- Create instance
+    local instance: AbilityInstance = {
+        definition = definition,
+        owner = characterData.Character,
+        level = characterData.Level or 1,
+        cooldownRemaining = 0,
+        charges = definition.charges and definition.charges.max or 0,
+        lastCastTime = 0,
+        castCount = 0,
+        modifiers = {},
+        computedStats = {},
+    } :: any
+    
+    -- Add methods
+    instance.canCast = function(self: AbilityInstance, target: Instance?): (boolean, string?)
+        return AbilityComponent:_CanCast(characterData, self, target)
+    end
+    
+    instance.execute = function(self: AbilityInstance, targetData: any?): boolean
+        return AbilityComponent:_ExecuteAbility(characterData, self, targetData)
+    end
+    
+    instance.interrupt = function(self: AbilityInstance, source: Instance?)
+        AbilityComponent:_InterruptAbility(characterData, self, source)
+    end
+    
+    instance.addModifier = function(self: AbilityInstance, modifier: Types.AbilityModifier)
+        table.insert(self.modifiers, modifier)
+        AbilityComponent:_RecalculateAbilityStats(self)
+    end
+    
+    instance.removeModifier = function(self: AbilityInstance, modifierId: string)
+        for i, modifier in ipairs(self.modifiers) do
+            if modifier.id == modifierId then
+                table.remove(self.modifiers, i)
+                AbilityComponent:_RecalculateAbilityStats(self)
+                break
+            end
+        end
+    end
+    
+    instance.getModifiedValue = function(self: AbilityInstance, stat: string): any
+        return self.computedStats[stat]
+    end
+    
+    -- Calculate initial stats
+    self:_RecalculateAbilityStats(instance)
+    
+    -- Initialize charges if applicable
+    if definition.charges and characterData.Character then
+        local cooldownManager = getCooldownManager()
+        cooldownManager:initializeCharges(
+            characterData.Character,
+            definition.id,
+            definition.charges.max,
+            definition.charges.rechargeTime,
+            definition.charges.sharedCharges and {definition.charges.sharedCharges}
+        )
+    elseif definition.charges and not characterData.Character then
+        warn(`[AbilityComponent] Cannot initialize charges for {definition.id}: characterData.Character is nil`)
+    end
+    
+    -- Store instance
+    component.AbilityInstances[definition.id] = instance
+    
+    return instance
+end
+
+function AbilityComponent:_CanCast(characterData: CharacterTypes.internalCharacter, instance: AbilityInstance, targetData: any?): (boolean, string?)
+    local owner = characterData.Character
+    local definition = instance.definition
+    
+    -- Debug logging
+    print("[AbilityComponent] _CanCast check:", {
+        owner = owner,
+        ownerName = owner and owner.Name or "nil",
+        ownerParent = owner and owner.Parent or "nil",
+        abilityId = definition.id,
+        characterDataPlayerId = characterData.PlayerId
+    })
+    
+    -- Critical: Check if owner is nil
+    if not owner then
+        warn("[AbilityComponent] Cannot cast ability - character is nil!")
+        return false, "Character not found"
+    end
+    
+    -- Check basic states
+    if characterData.StateManager:Get("IsDead") then
+        return false, "Dead"
+    end
+    
+    if characterData.StateManager:Get("IsStunned") then
+        return false, "Stunned"
+    end
+    
+    if characterData.StateManager:Get("CastingAbility") then
+        return false, "Already casting"
+    end
+    
+    if characterData.StateManager:Get("IsReloading") then
+        return false, "Reloading"
+    end
+    
+    -- Check cooldown
+    local cooldownManager = getCooldownManager()
+    if cooldownManager:isOnCooldown(owner, definition.id) then
+        local remaining = cooldownManager:getCooldownRemaining(owner, definition.id)
+        return false, `On cooldown ({math.ceil(remaining)}s)`
+    end
+
+    -- Check global cooldown
+    if cooldownManager:isOnGlobalCooldown(owner) then
+        return false, "Global cooldown"
+    end
+
+    -- Check charges
+    if definition.charges then
+        local currentCharges = cooldownManager:getCharges(owner, definition.id)
+        if currentCharges and currentCharges <= 0 then
+            return false, "No charges"
+        end
+    end
+    
+    -- Check resources
+    if definition.resources then
+        for _, resource in ipairs(definition.resources) do
+            if not self:_CheckResource(characterData, resource) then
+                return false, `Insufficient {resource.type}`
+            end
+        end
+    end
+    
+    -- Check requirements
+    if definition.requirements then
+        local reqs = definition.requirements
+        
+        if reqs.level and characterData.Level and characterData.Level < reqs.level then
+            return false, `Requires level {reqs.level}`
+        end
+        
+        if reqs.inCombat ~= nil then
+            local inCombat = characterData.StateManager:Get("InCombat")
+            if inCombat ~= reqs.inCombat then
+                return false, reqs.inCombat and "Must be in combat" or "Cannot use in combat"
+            end
+        end
+        
+        if reqs.custom and not reqs.custom(owner) then
+            return false, "Requirements not met"
+        end
+    end
+    
+    -- Validate target if needed
+    if definition.targeting.type ~= "Self" and targetData and targetData.target then
+        local isValid, reason = getTargetingSystem():validateTarget(owner, targetData.target, definition.targeting)
+        if not isValid then
+            return false, reason or "Invalid target"
+        end
+    end
+    
+    return true
+end
+
+function AbilityComponent:_ExecuteAbility(characterData: CharacterTypes.internalCharacter, instance: AbilityInstance, targetData: any?): boolean
+    local owner = characterData.Character
+    local definition = instance.definition
+    
+    -- Consume resources
+    if definition.resources then
+        for _, resource in ipairs(definition.resources) do
+            if resource.consumeOnUse ~= false then
+                self:_ConsumeResource(characterData, resource)
+            end
+        end
+    end
+    
+    -- Start cooldown or use charge
+    print("[AbilityComponent] Starting cooldown for ability:", definition.id, "owner:", owner, owner and owner.Name or "nil")
+    local cooldownManager = getCooldownManager()
+    if definition.charges then
+        cooldownManager:useCharge(owner, definition.id)
+    else
+        local cooldown = instance.computedStats.cooldown or (type(definition.cooldown) == "table" and definition.cooldown.base or definition.cooldown)
+        print("[AbilityComponent] Cooldown duration:", cooldown)
+        cooldownManager:startCooldown(owner, definition.id, cooldown :: number)
+    end
+
+    -- Start global cooldown
+    if definition.globalCooldown then
+        cooldownManager:startGlobalCooldown(owner, definition.globalCooldown)
+    end
+    
+    -- Update combo system
+    local comboSystem = getComboSystem()
+    comboSystem:onAbilityUsed(owner, definition.id, targetData)
+
+    -- Get targets
+    local targets = {}
+    local targetingSystem = getTargetingSystem()
+    if targetData and targetingSystem then
+        targets = targetingSystem:acquireTargets(owner, definition.targeting, {
+            target = targetData and targetData.target,
+            position = targetData and targetData.position or characterData.Character.PrimaryPart.Position,
+            direction = characterData.StateManager:Get("LookDirection") or Vector3.new(0, 0, -1)
+        })
+    end
+
+    -- Get combo multiplier
+    local comboMultiplier = comboSystem:getComboMultiplier(owner)
+    
+    -- Execute effects
+    local context = {
+        stats = instance.computedStats,
+        comboMultiplier = comboMultiplier,
+        level = instance.level,
+        caster = owner
+    }
+    
+    -- Handle different ability types
+    if definition.type == "Instant" then
+        self:_ExecuteInstantAbility(definition, owner, targets, context)
+    elseif definition.type == "Channeled" then
+        self:_ExecuteChanneledAbility(characterData, definition, owner, targets, context)
+    elseif definition.type == "Toggle" then
+        self:_ExecuteToggleAbility(characterData, definition, owner, context)
+    elseif definition.type == "Charged" then
+        self:_ExecuteChargedAbility(characterData, definition, owner, targetData, context)
+    end
+    
+    -- Update instance stats
+    instance.lastCastTime = os.clock()
+    instance.castCount = instance.castCount + 1
+    
+    -- Fire events
+    -- EventBus integration would go here if needed
+    -- Currently handled through NetworkManager
+    
+    -- Network replication
+    self:_ReplicateAbilityCast(characterData, definition.id, targetData, targets)
+    
+    return true
+end
+
+function AbilityComponent:_ExecuteInstantAbility(definition: AbilityDefinition, caster: Instance, targets: {Instance}, context: {[string]: any})
+    -- Execute OnCast effects
+    local onCastEffects = {}
+    if definition.effects then
+        for _, effect in ipairs(definition.effects) do
+            if effect.trigger == "OnCast" then
+                table.insert(onCastEffects, effect)
+            end
+        end
+    end
+    local effectComposer = getEffectComposer()
+    for _, effect in ipairs(onCastEffects) do
+        if effectComposer then
+            effectComposer:executeEffect(effect, caster, nil, context)
+        end
+    end
+    
+    -- Check if this is a projectile ability
+    local isProjectile = self:_HasTag(definition, "Projectile")
+    
+    -- For projectile abilities, perform hit detection
+    if isProjectile then
+        local hitTargets = self:_PerformHitDetection(caster, definition, context)
+        
+        -- Execute OnHit effects only for confirmed hits
+        local onHitEffects = {}
+        if definition.effects then
+            for _, effect in ipairs(definition.effects) do
+                if effect.trigger == "OnHit" then
+                    table.insert(onHitEffects, effect)
+                end
+            end
+        end
+        
+        for _, hitData in ipairs(hitTargets) do
+            for _, effect in ipairs(onHitEffects) do
+                if effectComposer then
+                    effectComposer:executeEffect(effect, caster, hitData.target, context)
+                end
+            end
+        end
+    else
+        -- Non-projectile abilities apply effects to all targeted enemies
+        local onHitEffects = {}
+        if definition.effects then
+            for _, effect in ipairs(definition.effects) do
+                if effect.trigger == "OnHit" then
+                    table.insert(onHitEffects, effect)
+                end
+            end
+        end
+        
+        for _, target in ipairs(targets) do
+            for _, effect in ipairs(onHitEffects) do
+                if effectComposer then
+                    effectComposer:executeEffect(effect, caster, target, context)
+                end
+            end
+        end
+    end
+end
+
+function AbilityComponent:_ExecuteChanneledAbility(characterData: CharacterTypes.internalCharacter, definition: AbilityDefinition, caster: Instance, targets: {Instance}, context: {[string]: any})
+    local component = characterData.Components.Ability :: AbilityComponentData
+    
+    -- Start channel
+    local channelTime = definition.channelTime and definition.channelTime.base or 3
+    local thread = task.spawn(function()
+        local startTime = os.clock()
+        
+        -- OnChannel effects
+        local onChannelEffects = {}
+        if definition.effects then
+            for _, effect in ipairs(definition.effects) do
+                if effect.trigger == "OnChannel" then
+                    table.insert(onChannelEffects, effect)
+                end
+            end
+        end
+        
+        while os.clock() - startTime < channelTime do
+            local _progress = (os.clock() - startTime) / channelTime
+            
+            -- Execute periodic effects
+            local effectComposer = getEffectComposer()
+            for _, effect in ipairs(onChannelEffects) do
+                if effectComposer then
+                    effectComposer:executeEffect(effect, caster, targets[1], context)
+                end
+            end
+            
+            -- Check if interrupted
+            if characterData.StateManager:Get("IsStunned") or characterData.StateManager:Get("IsDead") then
+                break
+            end
+            
+            task.wait(0.1)
+        end
+        
+        -- OnEnd effects
+        if os.clock() - startTime >= channelTime then
+            local onEndEffects = {}
+            if definition.effects then
+                for _, effect in ipairs(definition.effects) do
+                    if effect.trigger == "OnEnd" then
+                        table.insert(onEndEffects, effect)
+                    end
+                end
+            end
+            for _, target in ipairs(targets) do
+                for _, effect in ipairs(onEndEffects) do
+                    if effectComposer then
+                        effectComposer:executeEffect(effect, caster, target, context)
+                    end
+                end
+            end
+        end
+        
+        component.ActiveChannels[definition.id] = nil
+    end)
+    
+    component.ActiveChannels[definition.id] = thread
+end
+
+function AbilityComponent:_ExecuteToggleAbility(characterData: CharacterTypes.internalCharacter, definition: AbilityDefinition, caster: Instance, context: {[string]: any})
+    local component = characterData.Components.Ability :: AbilityComponentData
+    
+    -- Check if already active
+    local activeThread = component.ActiveChannels[definition.id]
+    if activeThread then
+        -- Deactivate
+        task.cancel(activeThread)
+        component.ActiveChannels[definition.id] = nil
+    else
+        -- Activate
+        local thread = task.spawn(function()
+            while true do
+                -- Execute periodic effects
+                local periodicEffects = {}
+                if definition.effects then
+                    for _, effect in ipairs(definition.effects) do
+                        if effect.trigger == "Periodic" then
+                            table.insert(periodicEffects, effect)
+                        end
+                    end
+                end
+                local effectComposer = getEffectComposer()
+                for _, effect in ipairs(periodicEffects) do
+                    if effectComposer then
+                        effectComposer:executeEffect(effect, caster, nil, context)
+                    end
+                end
+                
+                task.wait(1) -- Tick rate
+            end
+        end)
+        
+        component.ActiveChannels[definition.id] = thread
+    end
+end
+
+function AbilityComponent:_ExecuteChargedAbility(characterData: CharacterTypes.internalCharacter, definition: AbilityDefinition, caster: Instance, targetData: any?, context: {[string]: any})
+    -- This would implement charge-up mechanics
+    -- For now, treat as instant
+    self:_ExecuteInstantAbility(definition, caster, {}, context)
+end
+
+function AbilityComponent:_InterruptAbility(characterData: CharacterTypes.internalCharacter, instance: AbilityInstance, source: Instance?)
+    local component = characterData.Components.Ability :: AbilityComponentData
+    local definition = instance.definition
+    
+    -- Cancel active channel
+    local activeThread = component.ActiveChannels[definition.id]
+    if activeThread then
+        task.cancel(activeThread)
+        component.ActiveChannels[definition.id] = nil
+    end
+    
+    -- Fire interrupt event
+    -- EventBus integration would go here if needed
+    -- Currently handled through NetworkManager
+end
+
+function AbilityComponent:_HasTag(definition: AbilityDefinition, tag: string): boolean
+    if not definition.tags then
+        return false
+    end
+    
+    for _, t in ipairs(definition.tags) do
+        if t == tag then
+            return true
+        end
     end
     
     return false
 end
 
-function AbilityComponent:IsOnCooldown(characterData: CharacterTypes.internalCharacter, abilityId: string): boolean
-    local component = characterData.Components.Ability :: AbilityComponentData
-    if not component then
-        return false
+function AbilityComponent:_PerformHitDetection(caster: Instance, definition: AbilityDefinition, context: {[string]: any}): {{target: Instance, hitPoint: Vector3, distance: number}}
+    local hitTargets = {}
+    
+    -- Get character data to access components
+    local player = game.Players:GetPlayerFromCharacter(caster)
+    if not player then
+        return hitTargets
     end
     
-    local cooldownEnd = component.Cooldowns[abilityId]
-    return cooldownEnd ~= nil and tick() < cooldownEnd
+    local characterData = self:_GetCharacterData(player)
+    if not characterData then
+        return hitTargets
+    end
+    
+    -- Get mouse component data
+    local mouseComponent = characterData.Components.Mouse
+    if not mouseComponent then
+        return hitTargets
+    end
+    
+    -- Get character position (use HumanoidRootPart or PrimaryPart)
+    local rootPart = caster:FindFirstChild("HumanoidRootPart")
+    if not rootPart and caster:IsA("Model") then
+        rootPart = (caster :: Model).PrimaryPart
+    end
+    if not rootPart then
+        return hitTargets
+    end
+    
+    local rootPartTyped = rootPart :: BasePart
+    local startPosition = rootPartTyped.Position
+    local mouseHitPosition = mouseComponent.MouseHitPosition or characterData.StateManager:Get("MouseHitPosition")
+    
+    -- Calculate direction
+    local direction: Vector3
+    if mouseHitPosition and typeof(mouseHitPosition) == "Vector3" then
+        direction = (mouseHitPosition - startPosition).Unit
+    else
+        -- Fallback to forward direction
+        direction = rootPartTyped.CFrame.LookVector
+    end
+    
+    -- Get range from targeting config
+    local range = definition.targeting.range or 100
+    
+    -- Perform raycast
+    local raycastParams = RaycastParams.new()
+    raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+    raycastParams.FilterDescendantsInstances = {caster}
+    
+    -- Cast ray
+    local rayResult = workspace:Raycast(startPosition, direction * range, raycastParams)
+    
+    if rayResult then
+        -- Check if hit target is valid
+        local hitPart = rayResult.Instance
+        local hitModel = hitPart:FindFirstAncestorWhichIsA("Model")
+        
+        if hitModel then
+            local humanoidProbe : (Instance) -> Humanoid?
+            humanoidProbe = (function(obj : Instance) : Humanoid?
+                if not obj then
+                    return nil
+                end
+
+                if obj:FindFirstChildWhichIsA("Humanoid") then
+                    return obj:FindFirstChild("Humanoid", true)
+                end
+
+                return humanoidProbe((obj :: any).Parent)
+            end)
+
+            local humanoid = humanoidProbe(hitModel)
+            if humanoid and humanoid.Health > 0 then
+                warn(`[AbilityComponent] Validated target: {hitModel.Name}`)
+                -- Validate target based on filter
+                if self:_ValidateTarget(caster, hitModel, definition.targeting.filter) then
+                    table.insert(hitTargets, {
+                        target = hitModel,
+                        hitPoint = rayResult.Position,
+                        distance = (rayResult.Position - startPosition).Magnitude
+                    })
+                end
+            end
+        end
+    end
+    
+    -- For burst fire, we might want to add spread
+    if definition.customData and definition.customData.ammoPerBurst then
+        -- Add slight spread for burst shots if needed
+        -- This could be implemented later for more realistic burst fire
+    end
+    
+    return hitTargets
 end
 
-function AbilityComponent:GetCooldownRemaining(characterData: CharacterTypes.internalCharacter, abilityId: string): number
-    local component = characterData.Components.Ability :: AbilityComponentData
-    if not component then
-        return 0
+function AbilityComponent:_ValidateTarget(caster: Instance, target: Instance, filter: any?): boolean
+    if not filter then
+        return true
     end
     
-    local cooldownEnd = component.Cooldowns[abilityId]
-    if cooldownEnd then
-        return math.max(0, cooldownEnd - tick())
+    -- Check team filter
+    if filter.team then
+        if filter.team == "Enemy" then
+            -- For now, consider all other characters as enemies
+            return target ~= caster
+        elseif filter.team == "Ally" then
+            -- Would need team system implementation
+            return false
+        elseif filter.team == "All" then
+            return target ~= caster
+        end
     end
     
-    return 0
+    -- Check status filter  
+    if filter.status == "Alive" then
+        local humanoid = target:FindFirstChildOfClass("Humanoid")
+        if not humanoid or humanoid.Health <= 0 then
+            return false
+        end
+    end
+    
+    return true
 end
 
--- Private helper methods
+function AbilityComponent:_RecalculateAbilityStats(instance: AbilityInstance)
+    local definition = instance.definition
+    
+    -- Base stats
+    local baseStats = {
+        cooldown = type(definition.cooldown) == "table" and definition.cooldown.base or definition.cooldown,
+        castTime = definition.castTime and definition.castTime.base or 0,
+        range = definition.targeting.range or 0,
+        radius = definition.targeting.radius or 0,
+        damage = 0,
+        cost = {}
+    }
+    
+    -- Calculate resource costs
+    if definition.resources then
+        for _, resource in ipairs(definition.resources) do
+            local amount = type(resource.amount) == "table" and resource.amount.base or resource.amount
+            baseStats.cost[resource.type] = amount
+        end
+    end
+    
+    -- Apply modifiers
+    local modifierSystem = getModifierSystem()
+    instance.computedStats = modifierSystem:calculateModifiedStats(instance, baseStats)
+end
+
+function AbilityComponent:_ApplyPassiveAbility(characterData: CharacterTypes.internalCharacter, passiveId: string)
+    -- Get passive definition
+    local registry = getRegistry()
+    local definition = registry:getDefinition(passiveId)
+    if not definition then
+        return
+    end
+    
+    -- Apply passive effects
+    local passiveEffects = {}
+    if definition.effects then
+        for _, effect in ipairs(definition.effects) do
+            if effect.trigger == "Passive" then
+                table.insert(passiveEffects, effect)
+            end
+        end
+    end
+    local effectComposer = getEffectComposer()
+    for _, effect in ipairs(passiveEffects) do
+        if effectComposer then
+            effectComposer:executeEffect(effect, characterData.Character, nil, {})
+        end
+    end
+    
+    -- Apply modifiers if specified
+    if definition.modifiers then
+        local modifier: Types.AbilityModifier = {
+            id = `Passive_{passiveId}`,
+            source = characterData.Character,
+            priority = 10,
+            duration = nil, -- Permanent
+            statModifiers = definition.modifiers
+        }
+        local modifierSystem = getModifierSystem()
+        modifierSystem:applyModifier(characterData.Character, modifier)
+    end
+end
+
+function AbilityComponent:_CheckResource(characterData: CharacterTypes.internalCharacter, resource: Types.ResourceRequirement): boolean
+    local amount: number = if type(resource.amount) == "table" then (resource.amount :: any).base else resource.amount :: number
+    
+    if resource.type == "Health" then
+        local humanoid = characterData.Character:FindFirstChild("Humanoid") :: Humanoid?
+        return humanoid ~= nil and humanoid.Health > amount
+    elseif resource.type == "Stamina" then
+        local stamina = getNumericState(characterData.StateManager, "CurrentStamina", 100)
+        return stamina >= amount
+    elseif resource.type == "Mana" then
+        local mana = getNumericState(characterData.StateManager, "CurrentMana", 0)
+        return mana >= amount
+    elseif resource.type == "Energy" then
+        local energy = getNumericState(characterData.StateManager, "CurrentEnergy", 0)
+        return energy >= amount
+    elseif resource.type == "Rage" then
+        local rage = getNumericState(characterData.StateManager, "CurrentRage", 0)
+        return rage >= amount
+    elseif resource.type == "Focus" then
+        local focus = getNumericState(characterData.StateManager, "CurrentFocus", 0)
+        return focus >= amount
+    elseif resource.type == "Charges" then
+        local charges = getNumericState(characterData.StateManager, "CurrentCharges", 0)
+        return charges >= amount
+    elseif resource.type == "Ammo" then
+        -- For ammo, we need at least 1 shot
+        local currentAmmo = getNumericState(characterData.StateManager, "CurrentAmmo", 0)
+        return currentAmmo > 0
+    elseif resource.type == "Custom" then
+        local customKey = `Current{resource.type}`
+        local customValue = tonumber(characterData.StateManager:Get(customKey)) or 0
+        return customValue >= amount
+    end
+    
+    return true
+end
+
+function AbilityComponent:_ConsumeResource(characterData: CharacterTypes.internalCharacter, resource: Types.ResourceRequirement)
+    local amount: number = if type(resource.amount) == "table" then (resource.amount :: any).base else resource.amount :: number
+    
+    if resource.type == "Health" then
+        local humanoid = characterData.Character:FindFirstChild("Humanoid") :: Humanoid?
+        if humanoid then
+            humanoid:TakeDamage(amount)
+        end
+    elseif resource.type == "Stamina" then
+        local stamina = getNumericState(characterData.StateManager, "CurrentStamina", 100)
+        characterData.StateManager:Set("CurrentStamina", math.max(0, stamina - amount))
+    elseif resource.type == "Mana" then
+        local mana = getNumericState(characterData.StateManager, "CurrentMana", 0)
+        characterData.StateManager:Set("CurrentMana", math.max(0, mana - amount))
+    elseif resource.type == "Energy" then
+        local energy = getNumericState(characterData.StateManager, "CurrentEnergy", 0)
+        characterData.StateManager:Set("CurrentEnergy", math.max(0, energy - amount))
+    elseif resource.type == "Rage" then
+        local rage = getNumericState(characterData.StateManager, "CurrentRage", 0)
+        characterData.StateManager:Set("CurrentRage", math.min(100, rage + amount)) -- Rage increases on use
+    elseif resource.type == "Focus" then
+        local focus = getNumericState(characterData.StateManager, "CurrentFocus", 0)
+        characterData.StateManager:Set("CurrentFocus", math.max(0, focus - amount))
+    elseif resource.type == "Charges" then
+        local charges = getNumericState(characterData.StateManager, "CurrentCharges", 0)
+        characterData.StateManager:Set("CurrentCharges", math.max(0, charges - amount))
+    elseif resource.type == "Ammo" then
+        -- Consume 1 ammo per shot
+        local currentAmmo = getNumericState(characterData.StateManager, "CurrentAmmo", 0)
+        characterData.StateManager:Set("CurrentAmmo", math.max(0, currentAmmo - 1))
+
+        -- Handle reload if out of ammo
+        if currentAmmo - 1 <= 0 then
+            local maxAmmo = getNumericState(characterData.StateManager, "MaxAmmo", amount)
+            local reloadTime = getNumericState(characterData.StateManager, "ReloadTime", 3)
+            
+            -- Start reload
+            characterData.StateManager:Set("IsReloading", true)
+            task.spawn(function()
+                task.wait(reloadTime)
+                characterData.StateManager:Set("CurrentAmmo", maxAmmo)
+                characterData.StateManager:Set("IsReloading", false)
+            end)
+        end
+    elseif resource.type == "Custom" then
+        local customKey = `Current{resource.type}`
+        local customValue = tonumber(characterData.StateManager:Get(customKey)) or 0
+        characterData.StateManager:Set(customKey, math.max(0, customValue - amount))
+    end
+end
+
+function AbilityComponent:_ReplicateAbilityCast(characterData: CharacterTypes.internalCharacter, abilityId: string, targetData: any, targets: {Instance})
+    -- Network replication
+    local player = game.Players:GetPlayerFromCharacter(characterData.Character)
+    
+    if NetworkManager and NetworkManager.CastAbility then
+        local eventData = {
+            PlayerCaster = player or game.Players:GetPlayers()[1], -- Fallback for NPCs
+            CharacterName = characterData.Entity and characterData.Entity.name or "Unknown",
+            AbilityName = abilityId,
+            Position = targetData and targetData.position or Vector3.new(0,0,0),
+            Direction = targetData and targetData.normal or Vector3.new(0,0,-1)
+        }
+        
+        if player then
+            -- FireAllExcept doesn't exist, use FireAll with filter logic on client
+            NetworkManager.CastAbility.FireAll(eventData)
+        else
+            NetworkManager.CastAbility.FireAll(eventData)
+        end
+    end
+end
+
 function AbilityComponent:_HandleM1(player: Player, characterData: CharacterTypes.internalCharacter, isDown: boolean, meta: {[string]: any}?): boolean
     if not isDown then return true end
     
     local component = characterData.Components.Ability :: AbilityComponentData
-    if not component then return false end
-    
-    -- Check for ability override
-    local abilityId = component.KeyBindings.M1Ability or (component.Loadout.primaryAttacks and component.Loadout.primaryAttacks[1])
+    local abilityId = component.KeyBindings.M1 or (component.Loadout.primaryAttacks and component.Loadout.primaryAttacks[1])
     
     if abilityId then
-        return self:Activate(player, abilityId, meta)
+        return self:Activate(player, abilityId, meta and meta.target)
     end
     
-    -- No ability bound - let combat system handle default attack
     return false
 end
 
 function AbilityComponent:_HandleM2(player: Player, characterData: CharacterTypes.internalCharacter, isDown: boolean, meta: {[string]: any}?): boolean
     local component = characterData.Components.Ability :: AbilityComponentData
-    if not component then return false end
+    local abilityId = component.KeyBindings.M2 or (component.Loadout.primaryAttacks and component.Loadout.primaryAttacks[2])
     
-    -- Check for ability override
-    local abilityId = component.KeyBindings.M2Ability or (component.Loadout.primaryAttacks and component.Loadout.primaryAttacks[2])
-    
-    if abilityId then
-        if isDown then
-            return self:Activate(player, abilityId, meta)
-        end
-        return true
+    if abilityId and isDown then
+        return self:Activate(player, abilityId, meta and meta.target)
     end
     
-    -- No ability bound - let combat system handle default block
     return false
 end
 
@@ -364,228 +1233,41 @@ function AbilityComponent:_HandleSlot(player: Player, characterData: CharacterTy
     if not isDown then return false end
     
     local component = characterData.Components.Ability :: AbilityComponentData
-    if not component then return false end
-    
-    -- Extract slot number
     local slot = tonumber(string.sub(action, 5))
-    if not slot or slot < 1 or slot > 4 then
-        return false
-    end
     
-    -- Get ability for this slot
-    local abilityId = component.Loadout.actives and component.Loadout.actives[slot]
-    if abilityId then
-        return self:Activate(player, abilityId, meta)
+    if slot and slot >= 1 and slot <= 4 then
+        local abilityId = component.Loadout.actives and component.Loadout.actives[slot]
+        if abilityId then
+            return self:Activate(player, abilityId, meta and meta.target)
+        end
     end
     
     return false
-end
-
-function AbilityComponent:_HasAbility(component: AbilityComponentData, abilityId: string): boolean
-    -- Check actives
-    if component.Loadout.actives then
-        for _, id in ipairs(component.Loadout.actives) do
-            if id == abilityId then
-                return true
-            end
-        end
-    end
-    
-    -- Check primary attacks
-    if component.Loadout.primaryAttacks then
-        for _, id in ipairs(component.Loadout.primaryAttacks) do
-            if id == abilityId then
-                return true
-            end
-        end
-    end
-    
-    -- Check passive
-    if component.Loadout.passive == abilityId then
-        return true
-    end
-    
-    return false
-end
-
-function AbilityComponent:_ExecuteAbility(player: Player, characterData: CharacterTypes.internalCharacter, abilityId: string, ctxExtra: {[string]: any}?): boolean
-    -- Parse ability ID (format: "ClassName-AbilityName")
-    local parts = string.split(abilityId, "-")
-    if #parts < 2 then
-        warn("Invalid ability ID format:", abilityId)
-        return false
-    end
-    
-    local className = parts[1]
-    local abilityName = parts[2]
-    
-    -- Try to find and execute the ability module
-    local Abilities = game.ReplicatedStorage.Modules:FindFirstChild("Abilities")
-    if not Abilities then
-        warn("Abilities folder not found")
-        return false
-    end
-    
-    local classModule = Abilities:FindFirstChild(className)
-    if not classModule then
-        warn("Class module not found:", className)
-        return false
-    end
-    
-    local ok, module = pcall(require, classModule)
-    if not ok then
-        warn("Failed to require class module:", module)
-        return false
-    end
-    
-    local abilityModule = module[abilityName]
-    if not abilityModule then
-        warn("Ability not found in class:", abilityName)
-        return false
-    end
-    
-    -- Execute server validation
-    if abilityModule.Server and abilityModule.Server.Validate then
-        if not abilityModule.Server.InternalState.Cooldowns then
-            abilityModule.Server.InternalState.Cooldowns = CENTERALIZED_COOLDOWNS
-        end
-
-        local function onHit(model : Model)
-            -- Handle hit logic here
-            print(model)
-        end
-
-        -- Server validation - characterData already has mouse position in Components.Mouse
-        local success = abilityModule.Server:Validate(player, onHit, characterData)
-        if success then
-            -- Fire network event for client replication
-            local _NetworkServer = require(game.ReplicatedStorage.Modules.Network.Server)
-            if _NetworkServer and player then
-                -- Commented out to reduce spam
-                -- warn("Ability activated:", abilityId)
-                _NetworkServer.CastAbility.FireExcept(player, {
-                    AbilityName = abilityId :: string,
-                    PlayerCaster = player :: Player,
-                    Position = player.Character and player.Character.PrimaryPart and player.Character.PrimaryPart.Position :: Vector3,
-                    Direction = player.Character and player.Character.PrimaryPart and player.Character.PrimaryPart.CFrame.LookVector :: Vector3,
-                    CharacterName = player.Character and player.Character.Name :: string
-                } :: any)
-            end
-        end
-        return success
-    end
-    
-    return false
-end
-
-function AbilityComponent:_GetAbilityCooldown(abilityId: string): number?
-    -- Get from ability registry
-    local AbilityRegistry = require(game.ServerStorage.Modules.registery.Abilities)
-    local abilityDef = AbilityRegistry.GetAbility(abilityId)
-    
-    if abilityDef and abilityDef.cooldown then
-        return abilityDef.cooldown
-    end
-    
-    -- Default cooldowns based on ability type
-    if string.find(abilityId, "M1") then
-        return 0.5
-    elseif string.find(abilityId, "M2") then
-        return 0.3
-    else
-        return 1 -- Default 1 second for other abilities
-    end
-end
-
-function AbilityComponent:_GetAbilityDuration(abilityId: string): number?
-    -- Get from ability registry
-    local AbilityRegistry = require(game.ServerStorage.Modules.registery.Abilities)
-    local abilityDef = AbilityRegistry.GetAbility(abilityId)
-    return abilityDef and abilityDef.duration
-end
-
-function AbilityComponent:_ApplyPassiveModifiers(characterData: CharacterTypes.internalCharacter, passiveId: string, isEquipping: boolean)
-    local stateManager = characterData.StateManager
-    if not stateManager then return end
-    
-    local modifiers = PASSIVE_MODIFIERS[passiveId]
-    if not modifiers then return end
-    
-    local currentModifiers = stateManager:Get("PassiveModifiers") or {}
-    
-    for stat, value in pairs(modifiers) do
-        local current = currentModifiers[stat] or 0
-        currentModifiers[stat] = isEquipping 
-            and (current + value) 
-            or math.max(0, current - value)
-    end
-    
-    stateManager:Set("PassiveModifiers", currentModifiers)
 end
 
 function AbilityComponent:_GetCharacterData(player: Player): CharacterTypes.internalCharacter?
-    -- Use CharacterManager singleton to get character data
     local CharacterManager = require(game.ServerStorage.Modules.Entities.Character.CharacterManager)
     return CharacterManager:GetCharacterData(player) :: any
 end
 
--- Create singleton instance for backward compatibility
+-- Create singleton instance
 local instance = AbilityComponent.new()
 
--- Export both instance methods and static interface for backward compatibility
-local exports = {
-    -- Instance (for new usage)
+-- Export interface
+return {
     Instance = instance,
     
-    -- Static methods (for backward compatibility)
-    Initialize = function(characterData, config)
-        return instance:Initialize(characterData, config)
-    end,
-    
-    Update = function(characterData, dt)
-        return instance:Update(characterData, dt)
-    end,
-    
-    Cleanup = function(characterData)
-        return instance:Cleanup(characterData)
-    end,
-    
-    Activate = function(player, abilityId, ctxExtra)
-        return instance:Activate(player, abilityId, ctxExtra)
-    end,
-    
-    HandleInput = function(player, action, isDown, meta)
-        return instance:HandleInput(player, action, isDown, meta)
-    end,
-    
-    GetLoadout = function(playerId)
-        return instance:GetLoadout(playerId)
-    end,
-    
-    SetLoadout = function(characterData, loadout)
-        return instance:SetLoadout(characterData, loadout)
-    end,
-    
-    RemapBinding = function(player, binding, abilityId)
-        return instance:RemapBinding(player, binding, abilityId)
-    end,
-    
-    -- Legacy compatibility
-    PrimaryAttack = function(player, attackType)
-        return instance:HandleInput(player, "M1", true, {attackType = attackType})
-    end,
-    
-    M1 = function(player, attackType)
-        return instance:HandleInput(player, "M1", true, {attackType = attackType})
-    end,
-    
-    M2 = function(player, isDown)
-        return instance:HandleInput(player, "M2", isDown, nil)
-    end,
-
-    GetStaticCooldowns = function()
-        return CENTERALIZED_COOLDOWNS
-    end,
+    -- Component interface
+    Initialize = function(...) return instance:Initialize(...) end,
+    Update = function(...) return instance:Update(...) end,
+    Cleanup = function(...) return instance:Cleanup(...) end,
+    Activate = function(...) return instance:Activate(...) end,
+    HandleInput = function(...) return instance:HandleInput(...) end,
+    GetLoadout = function(...) return instance:GetLoadout(...) end,
+    SetLoadout = function(...) return instance:SetLoadout(...) end,
+    RemapBinding = function(...) return instance:RemapBinding(...) end,
+    IsOnCooldown = function(...) return instance:IsOnCooldown(...) end,
+    GetCooldownRemaining = function(...) return instance:GetCooldownRemaining(...) end,
+    ApplyModifier = function(...) return instance:ApplyModifier(...) end,
+    GetComboCount = function(...) return instance:GetComboCount(...) end,
 }
-
-return exports

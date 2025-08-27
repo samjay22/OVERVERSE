@@ -12,6 +12,7 @@ type MouseComponentData = {
     MouseHitNormal: Vector3,
     LastUpdateTime: number,
     IsValid: boolean,
+    _networkCleanup: (() -> ())?,
 }
 
 export type MouseComponent = BaseComponent.BaseComponent & {
@@ -42,9 +43,9 @@ function MouseComponent:Initialize(characterData: CharacterTypes.internalCharact
     characterData.Components.Mouse = componentData :: any
   
     -- Also update StateManager for other components to access
-    characterData.StateManager:Set("MouseHitPosition", DEFAULT_MOUSE_POSITION)
-    characterData.StateManager:Set("MouseTarget", nil)
-    characterData.StateManager:Set("MouseHitNormal", DEFAULT_MOUSE_NORMAL)
+    characterData.StateManager:Set("MouseHitPosition", DEFAULT_MOUSE_POSITION :: any)
+    characterData.StateManager:Set("MouseTarget", nil :: any)
+    characterData.StateManager:Set("MouseHitNormal", DEFAULT_MOUSE_NORMAL :: any)
     
     -- Set up network listener for mouse updates if player exists
     local player = characterData.Player or (characterData.PlayerId and game.Players:GetPlayerByUserId(characterData.PlayerId))
@@ -81,15 +82,14 @@ function MouseComponent:_SetupNetworkListener(characterData: CharacterTypes.inte
             end
         end)
         
-        -- Store connection for cleanup
-        characterData.Components.Mouse._networkConnection = connection
+        -- Store cleanup function for later
+        characterData.Components.Mouse._networkCleanup = connection
     else
         warn("MouseComponent: UpdateMouse network event not found")
     end
 end
 
 function MouseComponent:Update(characterData: CharacterTypes.internalCharacter, dt: number)
-    warn("[MouseComponent] Updating mouse position")
     if not self:IsEnabled(characterData) then
         return
     end
@@ -133,9 +133,9 @@ function MouseComponent:UpdateMousePosition(
     component.MouseTarget = (Targeting :: any):GetTarget(characterData.Entity.player :: Player)
     
     -- Update state manager for other components
-    characterData.StateManager:Set("MouseHitPosition", hitPosition)
-    characterData.StateManager:Set("MouseTarget",  component.MouseTarget)
-    characterData.StateManager:Set("MouseHitNormal", component.MouseHitNormal)
+    characterData.StateManager:Set("MouseHitPosition", hitPosition :: any)
+    characterData.StateManager:Set("MouseTarget", component.MouseTarget :: any)
+    characterData.StateManager:Set("MouseHitNormal", component.MouseHitNormal :: any)
 end
 
 function MouseComponent:GetMouseHitPosition(characterData: CharacterTypes.internalCharacter): Vector3?
@@ -180,10 +180,10 @@ end
 function MouseComponent:Cleanup(characterData: CharacterTypes.internalCharacter)
     local component = characterData.Components.Mouse :: MouseComponentData
     if component then
-        -- Disconnect network listener
-        if component._networkConnection then
-            component._networkConnection:Disconnect()
-            component._networkConnection = nil
+        -- Call cleanup function if it exists
+        if component._networkCleanup then
+            component._networkCleanup()
+            component._networkCleanup = nil
         end
         
         -- Clear data

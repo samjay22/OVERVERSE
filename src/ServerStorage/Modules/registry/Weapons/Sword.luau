@@ -1,7 +1,7 @@
 --!strict
 -- Sword weapon handler - updated with new strongly-typed system
 
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local _ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Enums = require(game.ReplicatedStorage.Modules.Types.Enums)
 local CombatComponent = require(game.ServerStorage.Modules.Components.CombatComponent)
 local WeaponTypes = require(game.ServerStorage.Modules.Types.WeaponTypes)

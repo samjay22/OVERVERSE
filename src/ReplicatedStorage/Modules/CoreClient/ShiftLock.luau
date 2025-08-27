@@ -13,7 +13,6 @@ local Workspace = game:GetService("Workspace")
 local ContextActionService = game:GetService("ContextActionService")
 local UserInputService = game:GetService("UserInputService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local TweenService = game:GetService("TweenService")
 
 --// Dependencies \\--
 local SharedUtils = game.ReplicatedStorage.Modules.Utility

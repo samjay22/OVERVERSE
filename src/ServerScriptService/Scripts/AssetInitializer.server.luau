@@ -198,7 +198,7 @@ local function initializeAssets()
     local registryTasks = {
         function()
             local success, LoadoutRegistry = _retryOperation(function()
-                return require(game.ServerStorage.Modules.registery.Loadouts)
+                return require(game.ServerStorage.Modules.registry.Loadouts)
             end, "Loadout Registry")
             
             if success then
@@ -209,7 +209,7 @@ local function initializeAssets()
         
         function()
             local success, EffectRegistry = _retryOperation(function()
-                return require(game.ServerStorage.Modules.registery.Effects)
+                return require(game.ServerStorage.Modules.registry.Effects)
             end, "Effect Registry")
             
             if success then

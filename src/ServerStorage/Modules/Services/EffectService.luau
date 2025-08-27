@@ -3,7 +3,7 @@
 
 local Enums = require(game.ReplicatedStorage.Modules.Types.Enums)
 local EffectTypes = require(game.ServerStorage.Modules.Types.EffectTypes)
-local EffectRegistry = require(game.ServerStorage.Modules.registery.Effects)
+local EffectRegistry = require(game.ServerStorage.Modules.registry.Effects)
 
 export type EffectId = Enums.EffectId
 export type EffectDef = EffectTypes.EffectDef

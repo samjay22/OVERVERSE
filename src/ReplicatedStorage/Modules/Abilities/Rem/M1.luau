@@ -1,7 +1,6 @@
 --!strict
 -- M1 Ability using centralized AbilityStateMachine
 
-local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 
 local Types = require(game.ReplicatedStorage.Modules.Types.AbilityTypes)
@@ -675,9 +674,6 @@ local Ability: Types.AbilityModule = {
             
             warn(`Server M1 - Seq: {sequence}, Burst: {burst-1}/{Config.BurstAmount}, Ammo: {ammo-1}/{Config.Ammo}`)
         
-            warn(characterData.Components)
-            
-        
             local entityPosition : Vector3 = characterData.Components.Movement.Position
             -- Perform raycast from entity position to target position
             if targetPosition then                
@@ -688,7 +684,6 @@ local Ability: Types.AbilityModule = {
                     end)
                 end
             else
-                -- Debug: warn("Server M1 - No target position provided, using look direction")
                 -- Fallback to using character's look direction if no target position
                 if player.Character and player.Character.PrimaryPart then
                     local direction = player.Character.PrimaryPart.CFrame.LookVector
@@ -730,21 +725,15 @@ local Ability: Types.AbilityModule = {
                     end
                 end)
             end
-            -- No else needed - timing check handles shot cooldown
             
             -- Sync state to client
             sm:SyncToClient(player)
             
             return true
         end,
-        
-        _SyncToClient = function(self, player: Player, sm: AbilityStateMachine.AbilityStateMachine)
-            -- This is now handled by the state machine itself
-            sm:SyncToClient(player)
-            return true
-        end,
 
         OnUpdate = function(self, dt)
+            local Players = game:GetService("Players")
             -- Clean up disconnected players
             for playerId, sm in pairs(self.InternalState.PlayerStateMachines) do
                 local player = Players:GetPlayerByUserId(playerId)

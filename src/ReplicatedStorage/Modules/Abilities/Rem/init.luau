@@ -7,10 +7,12 @@ local loaded = {}
 for _, module in ipairs(script:GetChildren()) do
     if module:IsA("ModuleScript") then
         local success, result : Types.AbilityModule = pcall(require, module)
-        if success then
-            loaded[result.Enum] = result
+        if success and result then
+            if result.Enum then
+                loaded[result.Enum] = result
+            end
             loaded[module.Name] = result
-            if RunService:IsServer() then
+            if RunService:IsServer() and result.Server and result.Server.OnUpdate then
                RunService.Heartbeat:Connect(function(dt)
                    result.Server:OnUpdate(dt)
                end)

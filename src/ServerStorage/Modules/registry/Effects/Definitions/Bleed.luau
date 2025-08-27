@@ -1,7 +1,7 @@
 --!strict
 -- Bleed effect - deals damage over time
 
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local _ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Enums = require(game.ReplicatedStorage.Modules.Types.Enums)
 local EffectTypes = require(game.ServerStorage.Modules.Types.EffectTypes)
 local EffectBase = require(game.ServerStorage.Modules.BaseClasses.EffectBase)

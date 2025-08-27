@@ -8,6 +8,7 @@ export type ComponentRegistry = {
     Get: (name: string) -> any?,
     GetAll: () -> {[string]: any},
     CreateInstance: (componentModule: any) -> any,
+    IsBaseComponent: (component: any) -> boolean,
 }
 
 local ComponentRegistry = {}
@@ -44,18 +45,41 @@ function ComponentRegistry.GetAll(): {[string]: any}
 end
 
 function ComponentRegistry.CreateInstance(componentModule: any): any
-    -- Check if it's already an instance with new-style exports
-    if componentModule.Instance then
-        return componentModule.Instance
+    -- Check if it's already an instance (new-style components return instances)
+    if componentModule and typeof(componentModule) == "table" then
+        -- Check if it has BaseComponent methods
+        if componentModule.Name and componentModule.Initialize and componentModule.Update then
+            return componentModule
+        end
+
+        -- Check if it's already an instance with new-style exports
+        if componentModule.Instance then
+            return componentModule.Instance
+        end
+
+        -- Check if it has a new() constructor (class-style)
+        if componentModule.new and typeof(componentModule.new) == "function" then
+            return componentModule.new()
+        end
     end
-    
-    -- Check if it has a new() constructor
-    if componentModule.new and typeof(componentModule.new) == "function" then
-        return componentModule.new()
-    end
-    
+
     -- Return as-is for old-style components
     return componentModule
+end
+
+function ComponentRegistry.IsBaseComponent(component: any): boolean
+    if not component or typeof(component) ~= "table" then
+        return false
+    end
+
+    -- Check for BaseComponent properties and methods
+    return component.Name ~= nil
+        and component.Initialize ~= nil
+        and component.Update ~= nil
+        and component.Cleanup ~= nil
+        and component.IsEnabled ~= nil
+        and component.Enable ~= nil
+        and component.Disable ~= nil
 end
 
 return ComponentRegistry

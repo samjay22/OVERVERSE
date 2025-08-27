@@ -1,7 +1,7 @@
 --!strict
 -- Spear weapon - longer range attacks with thrust mechanics (new interface)
 
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local _ReplicatedStorage = game:GetService("ReplicatedStorage")
 local CombatComponent = require(game.ServerStorage.Modules.Components.CombatComponent)
 local WeaponTypes = require(game.ServerStorage.Modules.Types.WeaponTypes)
 

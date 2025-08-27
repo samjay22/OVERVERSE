@@ -16,6 +16,12 @@ export type BaseComponent = {
 export type ComponentConstructor = {
     new: (name: string) -> BaseComponent,
     extend: (self: ComponentConstructor, name: string) -> ComponentConstructor,
+    Initialize: (self: BaseComponent, characterData: CharacterTypes.internalCharacter, config: any?) -> (),
+    Update: (self: BaseComponent, characterData: CharacterTypes.internalCharacter, dt: number) -> (),
+    Cleanup: (self: BaseComponent, characterData: CharacterTypes.internalCharacter) -> (),
+    IsEnabled: (self: BaseComponent, characterData: CharacterTypes.internalCharacter) -> boolean,
+    Enable: (self: BaseComponent, characterData: CharacterTypes.internalCharacter) -> (),
+    Disable: (self: BaseComponent, characterData: CharacterTypes.internalCharacter) -> (),
     __index : ComponentConstructor,
 }
 

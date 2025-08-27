@@ -1,6 +1,6 @@
 --!strict
 -- CharacterFactory - Responsible for creating character models and data
-local Players = game:GetService("Players")
+local _Players = game:GetService("Players")
 local CollectionService = game:GetService("CollectionService")
 
 local CharacterTypes = require(game.ServerStorage.Modules.Types.CharacterTypes)

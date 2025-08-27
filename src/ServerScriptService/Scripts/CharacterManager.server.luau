@@ -28,7 +28,7 @@ end)
         -- Manual character spawning with configuration - trigger when needed           
            -- Example: Spawn character with a passive ability in their loadout
            local exampleLoadout = {
-               primaryAttacks = { "Rem-M1", "Rem-M2" },
+               primaryAttacks = { "Rem_M1" },
                actives = { "Dash" }, -- Active ability in slot 1
                passive = "Keen",     -- Keen passive for critical hit bonuses
                animationPack = "Rem"

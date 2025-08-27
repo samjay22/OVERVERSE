@@ -44,10 +44,10 @@ The game uses a modular component-based entity architecture:
 ### Registry System
 Content definition and management through registries:
 
-- **Characters** (`ServerStorage/Modules/registery/Characters/`): Character class definitions (e.g., Rem)
-- **Loadouts** (`ServerStorage/Modules/registery/Loadouts/`): Ability configurations per character/form
-- **Effects** (`ServerStorage/Modules/registery/Effects/`): Buff/debuff definitions (Bleed, Fortify, Rally, Regeneration)
-- **Weapons** (`ServerStorage/Modules/registery/Weapons/`): Weapon type definitions (Sword, Spear)
+- **Characters** (`ServerStorage/Modules/registry/Characters/`): Character class definitions (e.g., Rem)
+- **Loadouts** (`ServerStorage/Modules/registry/Loadouts/`): Ability configurations per character/form
+- **Effects** (`ServerStorage/Modules/registry/Effects/`): Buff/debuff definitions (Bleed, Fortify, Rally, Regeneration)
+- **Weapons** (`ServerStorage/Modules/registry/Weapons/`): Weapon type definitions (Sword, Spear)
 
 ### Service Architecture
 Server-side game logic orchestration:
@@ -110,7 +110,7 @@ src/
 │       ├── Systems/       # Performance and scheduling
 │       ├── Types/         # Server type definitions
 │       ├── Utilities/     # Server utilities
-│       └── registery/     # Content definitions
+│       └── registry/      # Content definitions
 ├── StarterGui/           # UI components
 └── StarterPlayerScripts/ # Client initialization scripts
 ```

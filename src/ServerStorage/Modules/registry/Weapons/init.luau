@@ -1,7 +1,7 @@
 --!strict
 -- Weapon registry bootstrap: auto-discovers weapon handler modules
 
-local WeaponService = require(game.ServerStorage.Modules.Services.WeaponService)
+local _WeaponService = require(game.ServerStorage.Modules.Services.WeaponService)
 
 local function registerWeapon(service, def)
     if not def or not def.id then return end

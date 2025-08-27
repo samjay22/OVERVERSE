@@ -13,7 +13,6 @@ local AllowedInput = {
     [Enum.UserInputType.Keyboard.Name] = Enum.UserInputType.Keyboard,
 }
 
-
 _NetworkServer.ClientInputEvent.On(function(player, data)
     local validKeycode = AllowedInput[data.KeyCode]  or AllowedInput[data.UserInputType] 
     if not validKeycode then

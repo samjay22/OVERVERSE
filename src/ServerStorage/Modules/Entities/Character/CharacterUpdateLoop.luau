@@ -1,9 +1,9 @@
 --!strict
 -- CharacterUpdateLoop - Ultra-fast character updates with frame budgeting
-local Players = game:GetService("Players")
+local _Players = game:GetService("Players")
 
 local UpdateScheduler = require(game.ServerStorage.Modules.Systems.UpdateScheduler)
-local FrameBudgetManager = require(game.ServerStorage.Modules.Systems.FrameBudgetManager)
+local _FrameBudgetManager = require(game.ServerStorage.Modules.Systems.FrameBudgetManager)
 local CharacterTypes = require(game.ServerStorage.Modules.Types.CharacterTypes)
 
 type internalCharacter = CharacterTypes.internalCharacter

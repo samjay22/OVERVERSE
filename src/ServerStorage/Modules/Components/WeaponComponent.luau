@@ -38,7 +38,7 @@ function WeaponComponent:Initialize(characterData: CharacterTypes.internalCharac
     local service = WeaponService.New()
     
     -- Initialize weapon registry
-    local WeaponRegistryInit = require(game.ServerStorage.Modules.registery.Weapons)
+    local WeaponRegistryInit = require(game.ServerStorage.Modules.registry.Weapons)
     WeaponRegistryInit(service)
     
     local componentData: WeaponComponentData = {
@@ -220,7 +220,7 @@ end
 function WeaponComponent:GetService()
     -- Return a new service instance for compatibility
     local service = WeaponService.New()
-    local WeaponRegistryInit = require(game.ServerStorage.Modules.registery.Weapons)
+    local WeaponRegistryInit = require(game.ServerStorage.Modules.registry.Weapons)
     WeaponRegistryInit(service)
     return service
 end

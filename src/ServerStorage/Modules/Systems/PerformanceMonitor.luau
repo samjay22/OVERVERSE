@@ -2,7 +2,7 @@
 -- PerformanceMonitor: Real-time performance tracking and optimization recommendations
 
 local RunService = game:GetService("RunService")
-local HttpService = game:GetService("HttpService")
+local _HttpService = game:GetService("HttpService")
 
 type PerformanceMetrics = {
 	frameTime: number,

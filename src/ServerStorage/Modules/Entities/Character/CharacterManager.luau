@@ -9,7 +9,7 @@ local ServerStorage = game:GetService("ServerStorage")
 local CharacterTypes = require(game.ServerStorage.Modules.Types.CharacterTypes)
 local Constants = require(game.ReplicatedStorage.Modules.Utility.Constants)
 local NetworkServer = require(game.ReplicatedStorage.Modules.Network.Server)
-local LoadoutRegistry = require(game.ServerStorage.Modules.registery.Loadouts)
+local LoadoutRegistry = require(game.ServerStorage.Modules.registry.Loadouts)
 
 -- Import abstracted modules
 local characterFolder = ServerStorage.Modules.Entities.Character
@@ -241,7 +241,7 @@ function CharacterManager.New(): ICharacterManager
 end
 
 function CharacterManager:_LoadCharacterRegistry()
-    local success, registry = pcall(require, ServerStorage.Modules.registery.Characters)
+    local success, registry = pcall(require, ServerStorage.Modules.registry.Characters)
     if success then
         print(`✅ CharacterRegistry loaded: {registry.Count()} definitions`)
         return registry

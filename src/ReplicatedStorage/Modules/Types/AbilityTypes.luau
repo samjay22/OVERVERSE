@@ -27,7 +27,6 @@ export type AbilityModule = {
     Name : string,
     Enum : Enum.KeyCode | Enum.UserInputType,
     Client : Client,
-    Server : Server,
 }
 
 return 0

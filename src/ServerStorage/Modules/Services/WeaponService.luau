@@ -1,7 +1,7 @@
 --!strict
 -- WeaponService: unified weapon handling with OnAttack/OnHit and configs
 
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local _ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Enums = require(game.ReplicatedStorage.Modules.Types.Enums)
 local CharacterTypes = require(game.ServerStorage.Modules.Types.CharacterTypes)

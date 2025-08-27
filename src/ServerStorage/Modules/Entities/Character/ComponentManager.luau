@@ -54,13 +54,8 @@ function ComponentManager:RegisterComponent(name: string, component: ComponentIn
 	if component and component.Update and typeof(component.Update) == "function" then
 		-- Handle both old-style and new BaseComponent-style components
 		local updateFn = function(characterData, dt)
-			-- Check if it's a BaseComponent with self parameter
-			if (component :: any).Name and (component :: any).IsEnabled then
-				return component.Update(component, characterData, dt)
-			else
-				-- Old-style component
-				return component.Update(characterData, dt)
-			end
+			-- Use standardized update approach
+			return self:_UpdateComponent(component, characterData, dt)
 		end
 		
 		table.insert(self._updaters, { name = name, fn = updateFn })
@@ -126,7 +121,7 @@ function ComponentManager:InitializeComponents(characterData: internalCharacter,
 			-- Special handling for Ability component - inject default loadout if not provided
 			if componentName == "Ability" then
 				local Constants = require(game.ReplicatedStorage.Modules.Utility.Constants)
-				local AbilityLoadouts = require(game.ServerStorage.Modules.registery.Loadouts)
+				local AbilityLoadouts = require(game.ServerStorage.Modules.registry.Loadouts)
 				
 				local assetKey = Constants.CHARACTER_ASSET_DEFAULT
 				local loadout = AbilityLoadouts.Get(assetKey)
@@ -137,16 +132,9 @@ function ComponentManager:InitializeComponents(characterData: internalCharacter,
 			end
 			
 			-- Initialize component with character data and config
-			-- Handle both old-style and new BaseComponent-style components
-			local success, err
-			if (component :: any).Name and (component :: any).IsEnabled then
-				-- BaseComponent style
-				success, err = pcall(component.Initialize, component, characterData, componentConfig)
-			else
-				-- Old style
-				success, err = pcall(component.Initialize, characterData, componentConfig)
-			end
-			
+			-- Use standardized initialization approach
+			local success, err = self:_InitializeComponent(component, characterData, componentConfig)
+
 			if not success then
 				warn(`Failed to initialize component {componentName}: {err}`)
 			end
@@ -180,15 +168,9 @@ end
 function ComponentManager:CleanupComponents(characterData: internalCharacter)
 	for componentName, component in pairs(self._components) do
 		if component.Cleanup then
-			local success, err
-			if (component :: any).Name and (component :: any).IsEnabled then
-				-- BaseComponent style
-				success, err = pcall(component.Cleanup, component, characterData)
-			else
-				-- Old style
-				success, err = pcall(component.Cleanup, characterData)
-			end
-			
+			-- Use standardized cleanup approach
+			local success, err = self:_CleanupComponent(component, characterData)
+
 			if not success then
 				warn(`Failed to cleanup component {componentName}: {err}`)
 			end
@@ -224,6 +206,41 @@ function ComponentManager:IsComponentEnabled(characterData: internalCharacter, n
 		return (component :: any):IsEnabled(characterData)
 	end
 	return true -- Default to enabled for old-style components
+end
+
+-- Private helper methods for standardized component handling
+
+function ComponentManager:_InitializeComponent(component: any, characterData: internalCharacter, config: any?): (boolean, string?)
+	-- Handle both old-style and new BaseComponent-style components
+	if (component :: any).Name and (component :: any).IsEnabled then
+		-- BaseComponent style
+		return pcall(component.Initialize, component, characterData, config)
+	else
+		-- Old style
+		return pcall(component.Initialize, characterData, config)
+	end
+end
+
+function ComponentManager:_UpdateComponent(component: any, characterData: internalCharacter, dt: number): any
+	-- Handle both old-style and new BaseComponent-style components
+	if (component :: any).Name and (component :: any).IsEnabled then
+		-- BaseComponent style
+		return component.Update(component, characterData, dt)
+	else
+		-- Old-style component
+		return component.Update(characterData, dt)
+	end
+end
+
+function ComponentManager:_CleanupComponent(component: any, characterData: internalCharacter): (boolean, string?)
+	-- Handle both old-style and new BaseComponent-style components
+	if (component :: any).Name and (component :: any).IsEnabled then
+		-- BaseComponent style
+		return pcall(component.Cleanup, component, characterData)
+	else
+		-- Old style
+		return pcall(component.Cleanup, characterData)
+	end
 end
 
 return ComponentManager
