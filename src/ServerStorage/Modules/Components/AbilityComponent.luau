@@ -1,5 +1,7 @@
 --!strict
+local Debris = game:GetService("Debris")
 -- Ability Component - Rewritten to use the new scalable ability system
+-- HEAVILY OPTIMIZED FOR PERFORMANCE
 
 local BaseComponent = require(script.Parent.BaseComponent)
 local CharacterTypes = require(game.ServerStorage.Modules.Types.CharacterTypes)
@@ -15,6 +17,43 @@ local AbilityComboSystem = require(AbilitySystemPath.AbilityComboSystem)
 local CooldownManager = require(AbilitySystemPath.CooldownManager)
 local TargetingSystem = require(AbilitySystemPath.TargetingSystem)
 local NetworkManager = require(game.ReplicatedStorage.Modules.Network.Server)
+
+-- PERFORMANCE OPTIMIZATIONS - Cache frequently used functions
+local mathMax = math.max
+local mathMin = math.min
+local mathCeil = math.ceil
+local tableInsert = table.insert
+local tableClear = table.clear
+local taskSpawn = task.spawn
+local taskCancel = task.cancel
+local tick = tick
+
+-- OPTIMIZED: Object pools and buffer systems for maximum performance
+local ObjectPool = require(game.ServerStorage.Modules.Systems.ObjectPool)
+local BufferStateManager = require(game.ServerStorage.Modules.Systems.BufferStateManager)
+local BufferAbilitySerializer = require(game.ServerStorage.Modules.Systems.BufferAbilitySerializer)
+
+local abilityInstancePool = ObjectPool.ObjectPool.new(
+    function() return {} end,
+    function(instance) tableClear(instance) end,
+    32
+)
+local targetDataPool = ObjectPool.ObjectPool.new(
+    function() return {} end,
+    function(data) tableClear(data) end,
+    16
+)
+
+-- OPTIMIZED: Buffer-based state management for abilities
+local abilityStateBuffers = {} :: {[number]: BufferStateManager} -- playerId -> buffer manager
+
+-- Cache for frequently accessed singletons (lazy initialization)
+local registryCache = nil
+local cooldownManagerCache = nil
+local effectComposerCache = nil
+local modifierSystemCache = nil
+local comboSystemCache = nil
+local targetingSystemCache = nil
 
 type AbilityInstance = Types.AbilityInstance
 type AbilityDefinition = Types.AbilityDefinition
@@ -85,7 +124,7 @@ end
 
 local function getTargetingSystem()
     if not targetingSystem then
-        targetingSystem = TargetingSystem.get()
+        targetingSystem = TargetingSystem.new()
     end
     return targetingSystem
 end
@@ -150,21 +189,36 @@ function AbilityComponent:Update(characterData: CharacterTypes.internalCharacter
     if not self:IsEnabled(characterData) then
         return
     end
-    
+
     local component = characterData.Components.Ability :: AbilityComponentData
     if not component then
         return
     end
-    
-    -- Update combo state
-    local comboSystem = getComboSystem()
-    characterData.StateManager:Set("ComboCount", comboSystem:getComboCount(characterData.Character))
-    
-    -- Check for expired channels
-    for abilityId, thread in pairs(component.ActiveChannels) do
-        if thread and coroutine.status(thread) == "dead" then
-            component.ActiveChannels[abilityId] = nil
+
+    -- OPTIMIZED: Cache character reference and only update combo if needed
+    local character = characterData.Character
+    if character then
+        local comboSystem = getComboSystem()
+        local currentCombo = comboSystem:getComboCount(character)
+        local lastCombo = characterData.StateManager:Get("ComboCount")
+        if currentCombo ~= lastCombo then
+            characterData.StateManager:Set("ComboCount", currentCombo)
         end
+    end
+
+    -- OPTIMIZED: Check for expired channels with early exit
+    local activeChannels = component.ActiveChannels
+    local hasExpiredChannels = false
+    for abilityId, thread in pairs(activeChannels) do
+        if thread and coroutine.status(thread) == "dead" then
+            activeChannels[abilityId] = nil
+            hasExpiredChannels = true
+        end
+    end
+
+    -- Only trigger cleanup if we had expired channels
+    if hasExpiredChannels then
+        -- Trigger any necessary cleanup here if needed
     end
 end
 
@@ -220,7 +274,8 @@ function AbilityComponent:Activate(player: Player, abilityId: string, targetData
     -- Check if can cast
     local canCast, reason = self:_CanCast(characterData, instance, targetData)
     if not canCast then
-        -- Send failure feedback to player if needed
+        -- Send failure feedback to client for synchronization
+        self:_ReplicateAbilityCastFailure(characterData, abilityId, reason or "Unknown", targetData)
         return false
     end
     
@@ -645,12 +700,25 @@ function AbilityComponent:_ExecuteAbility(characterData: CharacterTypes.internal
     -- Start cooldown or use charge
     print("[AbilityComponent] Starting cooldown for ability:", definition.id, "owner:", owner, owner and owner.Name or "nil")
     local cooldownManager = getCooldownManager()
+    local cooldownStartTime = os.clock()
+
     if definition.charges then
         cooldownManager:useCharge(owner, definition.id)
+        -- Sync charge usage through scalable system
+        local maxCharges = 1 -- Default to 1 charge
+        if type(definition.charges) == "table" then
+            maxCharges = definition.charges.max
+        elseif type(definition.charges) == "number" then
+            maxCharges = definition.charges
+        end
+        self:_SyncChargeToClient(characterData, definition.id, maxCharges - 1)
     else
         local cooldown = instance.computedStats.cooldown or (type(definition.cooldown) == "table" and definition.cooldown.base or definition.cooldown)
         print("[AbilityComponent] Cooldown duration:", cooldown)
         cooldownManager:startCooldown(owner, definition.id, cooldown :: number)
+
+        -- Use improved sync system for immediate cooldown sync
+        self:_SyncCooldownToClient(characterData, definition.id, cooldown :: number, cooldownStartTime)
     end
 
     -- Start global cooldown
@@ -662,15 +730,25 @@ function AbilityComponent:_ExecuteAbility(characterData: CharacterTypes.internal
     local comboSystem = getComboSystem()
     comboSystem:onAbilityUsed(owner, definition.id, targetData)
 
-    -- Get targets
+    -- OPTIMIZED: Get targets with cached data and early exits
     local targets = {}
     local targetingSystem = getTargetingSystem()
     if targetData and targetingSystem then
-        targets = targetingSystem:acquireTargets(owner, definition.targeting, {
-            target = targetData and targetData.target,
-            position = targetData and targetData.position or characterData.Character.PrimaryPart.Position,
-            direction = characterData.StateManager:Get("LookDirection") or Vector3.new(0, 0, -1)
-        })
+        -- Cache frequently accessed values
+        local primaryPart = characterData.Character and characterData.Character.PrimaryPart
+        local position = (targetData and targetData.position) or (primaryPart and primaryPart.Position) or Vector3.new()
+        local direction = characterData.StateManager:Get("LookDirection") or Vector3.new(0, 0, -1)
+
+        -- Use pooled target config to reduce allocations
+        local targetConfig = targetDataPool:Get()
+        targetConfig.target = targetData and targetData.target
+        targetConfig.position = position
+        targetConfig.direction = direction
+
+        targets = targetingSystem:acquireTargets(owner, definition.targeting, targetConfig)
+
+        -- Return to pool
+        targetDataPool:Return(targetConfig)
     end
 
     -- Get combo multiplier
@@ -908,24 +986,18 @@ end
 
 function AbilityComponent:_PerformHitDetection(caster: Instance, definition: AbilityDefinition, context: {[string]: any}): {{target: Instance, hitPoint: Vector3, distance: number}}
     local hitTargets = {}
-    
+
     -- Get character data to access components
     local player = game.Players:GetPlayerFromCharacter(caster)
     if not player then
         return hitTargets
     end
-    
+
     local characterData = self:_GetCharacterData(player)
     if not characterData then
         return hitTargets
     end
-    
-    -- Get mouse component data
-    local mouseComponent = characterData.Components.Mouse
-    if not mouseComponent then
-        return hitTargets
-    end
-    
+
     -- Get character position (use HumanoidRootPart or PrimaryPart)
     local rootPart = caster:FindFirstChild("HumanoidRootPart")
     if not rootPart and caster:IsA("Model") then
@@ -934,11 +1006,14 @@ function AbilityComponent:_PerformHitDetection(caster: Instance, definition: Abi
     if not rootPart then
         return hitTargets
     end
-    
+
     local rootPartTyped = rootPart :: BasePart
     local startPosition = rootPartTyped.Position
-    local mouseHitPosition = mouseComponent.MouseHitPosition or characterData.StateManager:Get("MouseHitPosition")
-    
+
+    -- Get mouse component data for direction calculation
+    local mouseComponent = characterData.Components.Mouse
+    local mouseHitPosition = mouseComponent and mouseComponent.MouseHitPosition or characterData.StateManager:Get("MouseHitPosition")
+
     -- Calculate direction
     local direction: Vector3
     if mouseHitPosition and typeof(mouseHitPosition) == "Vector3" then
@@ -947,59 +1022,272 @@ function AbilityComponent:_PerformHitDetection(caster: Instance, definition: Abi
         -- Fallback to forward direction
         direction = rootPartTyped.CFrame.LookVector
     end
-    
-    -- Get range from targeting config
+
+    -- Get range and width from targeting config
     local range = definition.targeting.range or 100
-    
-    -- Perform raycast
-    local raycastParams = RaycastParams.new()
-    raycastParams.FilterType = Enum.RaycastFilterType.Exclude
-    raycastParams.FilterDescendantsInstances = {caster}
-    
-    -- Cast ray
-    local rayResult = workspace:Raycast(startPosition, direction * range, raycastParams)
-    
-    if rayResult then
-        -- Check if hit target is valid
-        local hitPart = rayResult.Instance
-        local hitModel = hitPart:FindFirstAncestorWhichIsA("Model")
-        
-        if hitModel then
-            local humanoidProbe : (Instance) -> Humanoid?
-            humanoidProbe = (function(obj : Instance) : Humanoid?
-                if not obj then
-                    return nil
-                end
+    local width = definition.targeting.radius or 5 -- Use radius as width for the collision part
 
-                if obj:FindFirstChildWhichIsA("Humanoid") then
-                    return obj:FindFirstChild("Humanoid", true)
-                end
+    -- Use invisible part collision detection instead of raycast
+    hitTargets = self:_PerformPartBasedHitDetection(caster, startPosition, direction, range, width, definition.targeting.filter)
 
-                return humanoidProbe((obj :: any).Parent)
-            end)
+    return hitTargets
+end
 
-            local humanoid = humanoidProbe(hitModel)
-            if humanoid and humanoid.Health > 0 then
-                warn(`[AbilityComponent] Validated target: {hitModel.Name}`)
-                -- Validate target based on filter
-                if self:_ValidateTarget(caster, hitModel, definition.targeting.filter) then
-                    table.insert(hitTargets, {
-                        target = hitModel,
-                        hitPoint = rayResult.Position,
-                        distance = (rayResult.Position - startPosition).Magnitude
-                    })
+function AbilityComponent:_PerformPartBasedHitDetection(caster: Instance, startPosition: Vector3, direction: Vector3, range: number, width: number, filter: any?): {{target: Instance, hitPoint: Vector3, distance: number}}
+    local hitTargets = {}
+
+    -- Create invisible collision part
+    local hitPart = Instance.new("Part")
+    hitPart.Name = "AbilityHitDetection"
+    hitPart.Anchored = true
+    hitPart.CanCollide = false
+    hitPart.CanTouch = true
+    hitPart.Transparency = 0 -- Invisible
+    hitPart.Material = Enum.Material.ForceField -- No visual impact
+
+    warn("Performing part-based hit detection")
+
+    -- Size the part based on range and width
+    -- Make it a rectangular prism extending forward from the character
+    hitPart.Size = Vector3.new(width, width, range)
+
+    -- Position the part forward from the character by half the range
+    local centerPosition = startPosition + direction * (range / 2)
+    hitPart.CFrame = CFrame.lookAt(centerPosition, centerPosition + direction)
+
+    -- Parent to workspace temporarily
+    hitPart.Parent = workspace
+
+    -- Track what we've already hit to avoid duplicates
+    local alreadyHit = {}
+    local temp = hitPart.Touched:Connect(warn)
+    local boundingParts = hitPart:GetTouchingParts()
+    temp:Disconnect()
+    for _, hit in ipairs(boundingParts) do
+         -- Find the character model
+        local hitModel = hit:FindFirstAncestorWhichIsA("Model")
+        if not hitModel then
+            continue
+        end
+
+        -- Avoid hitting the caster
+        if hitModel == caster then
+            continue
+        end
+
+        -- Avoid duplicate hits
+        if alreadyHit[hitModel] then
+            continue
+        end
+        alreadyHit[hitModel] = true
+
+        -- Check for humanoid
+        local humanoid = hitModel:FindFirstChildOfClass("Humanoid")
+        if not humanoid or humanoid.Health <= 0 then
+            continue
+        end
+
+        -- Validate target against filter
+        if not self:_ValidateTarget(caster, hitModel, filter) then
+            continue
+        end
+
+        -- Calculate hit point and distance
+        local targetRootPart = hitModel:FindFirstChild("HumanoidRootPart") or hitModel.PrimaryPart
+        local hitPoint: Vector3
+        if targetRootPart and targetRootPart:IsA("BasePart") then
+            hitPoint = (targetRootPart :: BasePart).Position
+        else
+            hitPoint = (hit :: BasePart).Position
+        end
+        local distance = (hitPoint - startPosition).Magnitude
+
+        -- Use pooled hit data to reduce allocations
+        local hitData = targetDataPool:Get() :: any
+        hitData.target = hitModel
+        hitData.hitPoint = hitPoint
+        hitData.distance = distance
+
+        tableInsert(hitTargets, hitData)
+    end
+
+    Debris:AddItem(hitPart, .15)
+    return hitTargets
+end
+
+-- Enhanced hit detection with different shapes and better performance
+function AbilityComponent:_PerformShapedHitDetection(caster: Instance, startPosition: Vector3, direction: Vector3, config: {
+    range: number,
+    width: number?,
+    height: number?,
+    shape: "Box" | "Sphere" | "Cone"?,
+    maxTargets: number?
+}): {{target: Instance, hitPoint: Vector3, distance: number}}
+    local hitTargets = {}
+    local shape = config.shape or "Box"
+    local maxTargets = config.maxTargets or math.huge
+
+    -- Create the appropriate collision part based on shape
+    local hitPart: BasePart
+
+    if shape == "Sphere" then
+        hitPart = Instance.new("Part")
+        local partTyped = hitPart :: Part
+        partTyped.Shape = Enum.PartType.Ball
+        hitPart.Size = Vector3.new(config.range * 2, config.range * 2, config.range * 2)
+        hitPart.CFrame = CFrame.new(startPosition)
+    elseif shape == "Cone" then
+        -- Use a wedge part for cone-like detection
+        hitPart = Instance.new("WedgePart")
+        local width = config.width or config.range * 0.5
+        hitPart.Size = Vector3.new(width, config.height or width, config.range)
+        local centerPosition = startPosition + direction * (config.range / 2)
+        hitPart.CFrame = CFrame.lookAt(centerPosition, centerPosition + direction)
+    else -- Box (default)
+        hitPart = Instance.new("Part")
+        local width = config.width or 5
+        local height = config.height or width
+        hitPart.Size = Vector3.new(width, height, config.range)
+        local centerPosition = startPosition + direction * (config.range / 2)
+        hitPart.CFrame = CFrame.lookAt(centerPosition, centerPosition + direction)
+    end
+
+    -- Configure the hit part
+    hitPart.Name = "AbilityHitDetection"
+    hitPart.Anchored = true
+    hitPart.CanCollide = false
+    hitPart.CanTouch = true
+    hitPart.Transparency = 1
+    hitPart.Material = Enum.Material.ForceField
+    hitPart.Parent = workspace
+
+    -- Track hits and setup collision detection
+    local alreadyHit = {}
+    local hitCount = 0
+
+    local connection
+    connection = hitPart.Touched:Connect(function(hit)
+        -- Early exit if we've hit max targets
+        if hitCount >= maxTargets then
+            return
+        end
+
+        local hitModel = hit:FindFirstAncestorWhichIsA("Model")
+        if not hitModel or hitModel == caster or alreadyHit[hitModel] then
+            return
+        end
+
+        alreadyHit[hitModel] = true
+
+        local humanoid = hitModel:FindFirstChildOfClass("Humanoid")
+        if not humanoid or humanoid.Health <= 0 then
+            return
+        end
+
+        -- For cone shape, do additional angle checking
+        if shape == "Cone" then
+            local targetPos = humanoid.RootPart and humanoid.RootPart.Position or hitModel.PrimaryPart and hitModel.PrimaryPart.Position
+            if targetPos then
+                local toTarget = (targetPos - startPosition).Unit
+                local angle = math.acos(direction:Dot(toTarget))
+                local maxAngle = math.rad(45) -- 45 degree cone
+                if angle > maxAngle then
+                    return
                 end
             end
         end
-    end
-    
-    -- For burst fire, we might want to add spread
-    if definition.customData and definition.customData.ammoPerBurst then
-        -- Add slight spread for burst shots if needed
-        -- This could be implemented later for more realistic burst fire
-    end
-    
+
+        local targetRootPart = hitModel:FindFirstChild("HumanoidRootPart") or hitModel.PrimaryPart
+        local hitPoint: Vector3
+        if targetRootPart and targetRootPart:IsA("BasePart") then
+            hitPoint = (targetRootPart :: BasePart).Position
+        else
+            hitPoint = (hit :: BasePart).Position
+        end
+
+        local hitData = targetDataPool:Get() :: any
+        hitData.target = hitModel
+        hitData.hitPoint = hitPoint
+        hitData.distance = (hitPoint - startPosition).Magnitude
+
+        tableInsert(hitTargets, hitData)
+        hitCount = hitCount + 1
+    end)
+
+    -- Brief wait for collision detection
+    task.wait(0.1)
+
+    -- Cleanup
+    connection:Disconnect()
+    hitPart:Destroy()
+
     return hitTargets
+end
+
+-- Example usage method for different ability types
+function AbilityComponent:_GetHitDetectionForAbility(caster: Instance, definition: AbilityDefinition, context: {[string]: any}): {{target: Instance, hitPoint: Vector3, distance: number}}
+    local rootPart = caster:FindFirstChild("HumanoidRootPart")
+    if not rootPart then
+        return {}
+    end
+
+    local rootPartTyped = rootPart :: BasePart
+    local startPosition = rootPartTyped.Position
+    local direction = rootPartTyped.CFrame.LookVector -- Default forward direction
+
+    -- Get mouse direction if available
+    local player = game.Players:GetPlayerFromCharacter(caster)
+    if player then
+        local characterData = self:_GetCharacterData(player)
+        if characterData and characterData.Components.Mouse then
+            local mouseHitPosition = characterData.Components.Mouse.MouseHitPosition
+            if mouseHitPosition and typeof(mouseHitPosition) == "Vector3" then
+                direction = (mouseHitPosition - startPosition).Unit
+            end
+        end
+    end
+
+    -- Determine hit detection method based on ability type
+    local abilityType = definition.customData and definition.customData.abilityType or "single"
+
+    if abilityType == "melee" then
+        -- Short range, wide arc for melee attacks
+        return self:_PerformShapedHitDetection(caster, startPosition, direction, {
+            range = definition.targeting.range or 8,
+            width = 10,
+            height = 8,
+            shape = "Box",
+            maxTargets = 3
+        })
+    elseif abilityType == "shotgun" then
+        -- Wide cone for shotgun-like abilities
+        return self:_PerformShapedHitDetection(caster, startPosition, direction, {
+            range = definition.targeting.range or 20,
+            width = 15,
+            height = 10,
+            shape = "Cone",
+            maxTargets = 5
+        })
+    elseif abilityType == "aoe" then
+        -- Sphere around caster for area abilities
+        return self:_PerformShapedHitDetection(caster, startPosition, direction, {
+            range = definition.targeting.radius or 15,
+            shape = "Sphere",
+            maxTargets = 10
+        })
+    elseif abilityType == "beam" then
+        -- Long, narrow beam
+        return self:_PerformPartBasedHitDetection(caster, startPosition, direction,
+            definition.targeting.range or 50,
+            definition.targeting.radius or 3,
+            definition.targeting.filter)
+    else
+        -- Default single target or projectile
+        return self:_PerformPartBasedHitDetection(caster, startPosition, direction,
+            definition.targeting.range or 30,
+            definition.targeting.radius or 5,
+            definition.targeting.filter)
+    end
 end
 
 function AbilityComponent:_ValidateTarget(caster: Instance, target: Instance, filter: any?): boolean
@@ -1036,8 +1324,8 @@ function AbilityComponent:_RecalculateAbilityStats(instance: AbilityInstance)
     
     -- Base stats
     local baseStats = {
-        cooldown = type(definition.cooldown) == "table" and definition.cooldown.base or definition.cooldown,
-        castTime = definition.castTime and definition.castTime.base or 0,
+        cooldown = type(definition.cooldown) == "table" and (definition.cooldown :: any).base or definition.cooldown,
+        castTime = definition.castTime and (definition.castTime :: any).base or 0,
         range = definition.targeting.range or 0,
         radius = definition.targeting.radius or 0,
         damage = 0,
@@ -1054,22 +1342,22 @@ function AbilityComponent:_RecalculateAbilityStats(instance: AbilityInstance)
     
     -- Apply modifiers
     local modifierSystem = getModifierSystem()
-    instance.computedStats = modifierSystem:calculateModifiedStats(instance, baseStats)
+    instance.computedStats = (modifierSystem :: any):calculateModifiedStats(instance, baseStats)
 end
 
 function AbilityComponent:_ApplyPassiveAbility(characterData: CharacterTypes.internalCharacter, passiveId: string)
     -- Get passive definition
     local registry = getRegistry()
-    local definition = registry:getDefinition(passiveId)
+    local definition = (registry :: any):getDefinition(passiveId)
     if not definition then
         return
     end
-    
+
     -- Apply passive effects
     local passiveEffects = {}
     if definition.effects then
         for _, effect in ipairs(definition.effects) do
-            if effect.trigger == "Passive" then
+            if (effect :: any).trigger == "Passive" then
                 table.insert(passiveEffects, effect)
             end
         end
@@ -1091,7 +1379,8 @@ function AbilityComponent:_ApplyPassiveAbility(characterData: CharacterTypes.int
             statModifiers = definition.modifiers
         }
         local modifierSystem = getModifierSystem()
-        modifierSystem:applyModifier(characterData.Character, modifier)
+        local modifierSystemTyped = modifierSystem :: any
+        modifierSystemTyped:applyModifier(characterData.Character, modifier)
     end
 end
 
@@ -1186,7 +1475,7 @@ end
 function AbilityComponent:_ReplicateAbilityCast(characterData: CharacterTypes.internalCharacter, abilityId: string, targetData: any, targets: {Instance})
     -- Network replication
     local player = game.Players:GetPlayerFromCharacter(characterData.Character)
-    
+
     if NetworkManager and NetworkManager.CastAbility then
         local eventData = {
             PlayerCaster = player or game.Players:GetPlayers()[1], -- Fallback for NPCs
@@ -1195,7 +1484,7 @@ function AbilityComponent:_ReplicateAbilityCast(characterData: CharacterTypes.in
             Position = targetData and targetData.position or Vector3.new(0,0,0),
             Direction = targetData and targetData.normal or Vector3.new(0,0,-1)
         }
-        
+
         if player then
             -- FireAllExcept doesn't exist, use FireAll with filter logic on client
             NetworkManager.CastAbility.FireAll(eventData)
@@ -1203,6 +1492,84 @@ function AbilityComponent:_ReplicateAbilityCast(characterData: CharacterTypes.in
             NetworkManager.CastAbility.FireAll(eventData)
         end
     end
+end
+
+-- New method to send ability cast failure to client using state sync
+function AbilityComponent:_ReplicateAbilityCastFailure(characterData: CharacterTypes.internalCharacter, abilityId: string, reason: string, targetData: any?)
+    -- Set a temporary state that the client can read to cancel prediction
+    characterData.StateManager:Set("LastAbilityCastFailed", {
+        abilityId = abilityId,
+        reason = reason,
+        timestamp = os.clock()
+    })
+
+    -- Clear the failure state after a short time
+    task.delay(0.5, function()
+        if characterData.StateManager then
+            characterData.StateManager:Set("LastAbilityCastFailed", {})
+        end
+    end)
+end
+
+local function debugLog(message: string)
+    print(`[AbilityComponent] {message}`)
+end
+
+-- Immediately sync cooldown state to client for better timing
+function AbilityComponent:_SyncCooldownToClient(characterData: CharacterTypes.internalCharacter, abilityId: string, cooldownDuration: number, startTime: number)
+    local player = game.Players:GetPlayerFromCharacter(characterData.Character)
+    if not player then
+        return
+    end
+
+    -- Use improved immediate sync for better timing
+    local cooldownEndTime = startTime + cooldownDuration
+    local cooldownState = {
+        abilityId = abilityId,
+        startTime = startTime,
+        endTime = cooldownEndTime,
+        duration = cooldownDuration,
+        timestamp = os.clock()
+    }
+
+    -- Set immediate cooldown state for client sync
+    characterData.StateManager:Set("ImmediateCooldownSync", cooldownState)
+
+    debugLog(`Immediate cooldown sync sent for {abilityId}: {cooldownDuration}s`)
+
+    -- Clear the immediate sync state after a short time
+    task.delay(1.0, function()
+        if characterData.StateManager then
+            characterData.StateManager:Set("ImmediateCooldownSync", {})
+        end
+    end)
+end
+
+-- Sync charge state to client through improved system
+function AbilityComponent:_SyncChargeToClient(characterData: CharacterTypes.internalCharacter, abilityId: string, remainingCharges: number)
+    local player = game.Players:GetPlayerFromCharacter(characterData.Character)
+    if not player then
+        return
+    end
+
+    -- Use immediate charge sync for better timing
+    local chargeState = {
+        abilityId = abilityId,
+        charges = remainingCharges,
+        timestamp = os.clock()
+    }
+
+    -- Set immediate charge state for client sync
+    characterData.StateManager:Set("ImmediateChargeSync", chargeState)
+
+    debugLog(`Immediate charge sync sent for {abilityId}: {remainingCharges} charges remaining`)
+
+    -- Clear the immediate sync state after a short time
+    task.delay(1.0, function()
+        if characterData.StateManager then
+            characterData.StateManager:Set("ImmediateChargeSync", {})
+        end
+    end)
 end
 
 function AbilityComponent:_HandleM1(player: Player, characterData: CharacterTypes.internalCharacter, isDown: boolean, meta: {[string]: any}?): boolean

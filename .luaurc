@@ -1,7 +1,6 @@
 {
 	"aliases": {
 		"src": "./",
-		"M1": "./src/ReplicatedStorage/Modules/Abilities/Rem/M1.luau",
 		"init": "./src/ReplicatedStorage/Modules/Abilities/Rem/init.luau",
 		"Animations": "./src/ReplicatedStorage/Modules/AssetHandlers/Animations.luau",
 		"Character": "./src/ReplicatedStorage/Modules/AssetHandlers/Character.luau",
@@ -33,7 +32,6 @@
 		"Spring": "./src/ReplicatedStorage/Modules/Utility/Spring.luau",
 		"StateManager": "./src/ReplicatedStorage/Modules/Utility/StateManager.luau",
 		"TargetValidator": "./src/ReplicatedStorage/Modules/Utility/TargetValidator.luau",
-		"InitializeAbilitySystem": "./src/ServerScriptService/InitializeAbilitySystem.server.luau",
 		"InputHandler": "./src/ServerScriptService/Network/InputHandler.server.luau",
 		"AbilityManager": "./src/ServerScriptService/Scripts/AbilityManager.server.luau",
 		"AssetInitializer": "./src/ServerScriptService/Scripts/AssetInitializer.server.luau",
@@ -41,6 +39,7 @@
 		"ComponentInitializer": "./src/ServerScriptService/Scripts/ComponentInitializer.server.luau",
 		"NpcInit": "./src/ServerScriptService/Scripts/NpcInit.server.luau",
 		"TargetServer": "./src/ServerScriptService/Scripts/TargetServer.server.luau",
+		"M1": "./src/ServerStorage/AbilityDefinitions/Rem/M1.luau",
 		"EffectBase": "./src/ServerStorage/Modules/BaseClasses/EffectBase.luau",
 		"AbilityComponent": "./src/ServerStorage/Modules/Components/AbilityComponent.luau",
 		"BaseComponent": "./src/ServerStorage/Modules/Components/BaseComponent.luau",
@@ -59,7 +58,6 @@
 		"AbilityRegistry": "./src/ServerStorage/Modules/Core/AbilitySystem/AbilityRegistry.luau",
 		"CooldownManager": "./src/ServerStorage/Modules/Core/AbilitySystem/CooldownManager.luau",
 		"EffectComposer": "./src/ServerStorage/Modules/Core/AbilitySystem/EffectComposer.luau",
-		"TargetingSystem": "./src/ServerStorage/Modules/Core/AbilitySystem/TargetingSystem.luau",
 		"BaseRegistry": "./src/ServerStorage/Modules/Core/BaseRegistry.luau",
 		"Registry": "./src/ServerStorage/Modules/Core/Registry.luau",
 		"ServiceFactory": "./src/ServerStorage/Modules/Core/ServiceFactory.luau",
@@ -98,10 +96,13 @@
 		"AbilityEffectsHandler": "./src/StarterPlayerScripts/AbilityEffectsHandler.client.luau",
 		"CameraController": "./src/StarterPlayerScripts/CameraController.client.luau",
 		"CameraWalkHandler": "./src/StarterPlayerScripts/CameraWalkHandler.luau",
-		"ClientController": "./src/StarterPlayerScripts/ClientController.client.luau",
 		"MouseController": "./src/StarterPlayerScripts/MouseController.client.luau",
 		"MouseTracker": "./src/StarterPlayerScripts/MouseTracker.client.luau",
 		"MovementAnimationHandler": "./src/StarterPlayerScripts/MovementAnimationHandler.client.luau",
-		"TestCooldowns": "./src/ServerScriptService/TestCooldowns.server.luau"
+		"BufferStateManager": "./src/ServerStorage/Modules/Systems/BufferStateManager.luau",
+		"BufferAbilitySerializer": "./src/ServerStorage/Modules/Systems/BufferAbilitySerializer.luau",
+		"BufferCharacterSync": "./src/ServerStorage/Modules/Systems/BufferCharacterSync.luau",
+		"TargetingSystem": "./src/ServerStorage/Modules/Core/AbilitySystem/TargetingSystem.luau",
+		"ClientController": "./src/StarterPlayerScripts/ClientController.client.luau"
 	}
 }

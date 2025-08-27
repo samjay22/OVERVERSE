@@ -11,12 +11,85 @@ type EffectType = Types.EffectType
 type DamageType = Types.DamageType
 type ScalableValue = Types.ScalableValue
 
+type ActiveEffect = {
+    id: string,
+    config: EffectConfig,
+    caster: Instance,
+    target: Instance?,
+    startTime: number,
+    duration: number?,
+    tickRate: number?,
+    lastTick: number?,
+    stacks: number,
+    data: {[string]: any},
+    children: {ActiveEffect}?,
+    parent: ActiveEffect?,
+    onComplete: (() -> ())?,
+    onTick: ((effect: ActiveEffect) -> ())?
+}
+
+type EffectComposerClass = {
+    __index: EffectComposerClass,
+    new: () -> EffectComposer,
+    get: () -> EffectComposer,
+
+    activeEffects: {[Instance]: {ActiveEffect}},
+    effectsByType: {[string]: {ActiveEffect}},
+    periodicEffects: {ActiveEffect},
+    effectPools: {[string]: {any}},
+    stats: {
+        totalEffectsCreated: number,
+        totalEffectsCompleted: number,
+        activeEffectCount: number,
+        pooledEffectCount: number
+    },
+
+    executeEffect: (self: EffectComposer, config: EffectConfig, caster: Instance, target: Instance?, context: {[string]: any}?) -> ActiveEffect?,
+    completeEffect: (self: EffectComposer, effect: ActiveEffect) -> (),
+    stackEffect: (self: EffectComposer, effect: ActiveEffect, additionalStacks: number) -> (),
+    modifyEffect: (self: EffectComposer, effect: ActiveEffect, modifications: {[string]: any}) -> (),
+    getActiveEffects: (self: EffectComposer, target: Instance) -> {ActiveEffect},
+    getActiveEffectsByType: (self: EffectComposer, effectType: string) -> {ActiveEffect},
+    removeAllEffects: (self: EffectComposer, target: Instance) -> (),
+    getStats: (self: EffectComposer) -> {[string]: number},
+
+    _registerDefaultHandlers: (self: EffectComposer) -> (),
+    _registerAdvancedHandlers: (self: EffectComposer) -> (),
+    _startUpdateLoop: (self: EffectComposer) -> (),
+    _createActiveEffect: (self: EffectComposer, config: EffectConfig, caster: Instance, target: Instance?) -> ActiveEffect,
+    _shouldTrigger: (self: EffectComposer, config: EffectConfig, caster: Instance, target: Instance?, context: {[string]: any}?) -> boolean,
+    _calculateValue: (self: EffectComposer, value: number | ScalableValue | Types.ValueRange | nil, stats: {[string]: number}?) -> number,
+    _getPosition: (self: EffectComposer, instance: Instance) -> Vector3?,
+    _getDirection: (self: EffectComposer, directionType: string, caster: Instance, target: Instance?) -> Vector3,
+    _getTargetsInArea: (self: EffectComposer, position: Vector3, radius: number, filter: Types.TargetFilter?) -> {Instance},
+    _passesFilter: (self: EffectComposer, target: Instance, filter: Types.TargetFilter?) -> boolean,
+    _createProjectile: (self: EffectComposer, model: string?) -> Part?,
+    _trackEffect: (self: EffectComposer, effect: ActiveEffect) -> (),
+    _untrackEffect: (self: EffectComposer, effect: ActiveEffect) -> (),
+    _returnToPool: (self: EffectComposer, effect: ActiveEffect) -> (),
+    _getModifierSystem: (self: EffectComposer) -> any?
+}
+
+type EffectComposer = typeof(setmetatable({} :: {
+    activeEffects: {[Instance]: {ActiveEffect}},
+    effectsByType: {[string]: {ActiveEffect}},
+    periodicEffects: {ActiveEffect},
+    effectPools: {[string]: {any}},
+    stats: {
+        totalEffectsCreated: number,
+        totalEffectsCompleted: number,
+        activeEffectCount: number,
+        pooledEffectCount: number
+    }
+}, {} :: EffectComposerClass))
+
 -- Effect Composer: Handles composition and execution of ability effects
-local EffectComposer = {}
+local EffectComposer = {} :: EffectComposerClass
 EffectComposer.__index = EffectComposer
 
 -- Effect handlers registry
-local effectHandlers = {} :: {[EffectType]: (any) -> ()}
+type EffectHandler = (composer: any, effect: any, config: any, caster: Instance, target: Instance?) -> ()
+local effectHandlers = {} :: {[string]: EffectHandler}
 
 function EffectComposer.new()
     local self = setmetatable({}, EffectComposer)
@@ -44,51 +117,36 @@ function EffectComposer.new()
     return self
 end
 
-type ActiveEffect = {
-    id: string,
-    config: EffectConfig,
-    caster: Instance,
-    target: Instance?,
-    startTime: number,
-    duration: number?,
-    tickRate: number?,
-    lastTick: number?,
-    stacks: number,
-    data: {[string]: any},
-    children: {ActiveEffect}?,
-    parent: ActiveEffect?,
-    onComplete: (() -> ())?,
-    onTick: ((effect: ActiveEffect) -> ())?
-}
-
 -- Core effect execution
 
 function EffectComposer:executeEffect(
-    config: EffectConfig, 
-    caster: Instance, 
-    target: Instance?, 
+    config: EffectConfig,
+    caster: Instance,
+    target: Instance?,
     context: {[string]: any}?
 ): ActiveEffect?
-    
+
     -- Check trigger condition
     if not self:_shouldTrigger(config, caster, target, context) then
         return nil
     end
-    
+
     -- Create active effect
     local effect = self:_createActiveEffect(config, caster, target)
-    
+
     -- Apply effect data from context
     if context then
         for key, value in pairs(context) do
             effect.data[key] = value
         end
     end
-    
+
     -- Execute based on effect type
     local handler = effectHandlers[config.type]
     if handler then
-        local success, result = pcall(handler, self, effect, config, caster, target)
+        local success, result = pcall(function()
+            handler(self, effect, config, caster, target)
+        end)
         if not success then
             warn(`[EffectComposer] Failed to execute effect {config.type}: {result}`)
             return nil
@@ -180,14 +238,14 @@ end
 
 function EffectComposer:modifyEffect(effect: ActiveEffect, modifications: {[string]: any})
     for key, value in pairs(modifications) do
-        if key == "duration" and effect.duration then
-            effect.duration = value
-        elseif key == "tickRate" and effect.tickRate then
-            effect.tickRate = value
+        if key == "duration" and (effect :: any).duration then
+            (effect :: any).duration = value
+        elseif key == "tickRate" and (effect :: any).tickRate then
+            (effect :: any).tickRate = value
         elseif key == "stacks" then
-            self:stackEffect(effect, value - effect.stacks)
+            self:stackEffect(effect, value - (effect :: any).stacks)
         else
-            effect.data[key] = value
+            (effect :: any).data[key] = value
         end
     end
 end
@@ -196,27 +254,22 @@ end
 
 function EffectComposer:_registerDefaultHandlers()
     -- Damage effect
-    effectHandlers.Damage = function(self, effect, config, caster, target)
-        if not target then 
+    effectHandlers["Damage"] = function(self: EffectComposer, effect: ActiveEffect, config: EffectConfig, caster: Instance, target: Instance?)
+        if not target then
             print("[EffectComposer] No target for damage effect")
-            return 
+            return
         end
-        
-        print("[EffectComposer] Applying damage effect to:", target, target and target.Name or "nil")
-        
+
         local amount = self:_calculateValue(config.amount, effect.data.stats)
         local damageType = config.damageType or "Physical"
-        
-        print("[EffectComposer] Damage amount:", amount, "Type:", damageType)
-        
+
         -- Apply damage directly to humanoid
         local humanoid = target:FindFirstChildOfClass("Humanoid")
         if humanoid then
-            print("[EffectComposer] Found humanoid, applying damage:", amount)
             -- For now, apply damage directly
             -- Later this can be enhanced with damage types, resistances, etc.
             humanoid:TakeDamage(amount)
-            
+
             -- Fire damage event for other systems to listen to
             local ReplicatedStorage = game:GetService("ReplicatedStorage")
             local EventBus = ReplicatedStorage:FindFirstChild("EventBus")
@@ -235,84 +288,82 @@ function EffectComposer:_registerDefaultHandlers()
                 end
             end
         else
-            print("[EffectComposer] No humanoid found in target!")
             -- List all children for debugging
             local children = {}
-            for _, child in ipairs(target:GetChildren()) do
+            for _, child: Instance in ipairs(target:GetChildren()) do
                 table.insert(children, child.Name .. " (" .. child.ClassName .. ")")
             end
-            print("[EffectComposer] Target children:", table.concat(children, ", "))
         end
-        
+
         effect.data.damageDealt = amount
     end
-    
+
     -- Heal effect
-    effectHandlers.Heal = function(self, effect, config, caster, target)
+    effectHandlers["Heal"] = function(self: EffectComposer, effect: ActiveEffect, config: EffectConfig, caster: Instance, target: Instance?)
         if not target then return end
-        
+
         local amount = self:_calculateValue(config.amount, effect.data.stats)
-        
+
         local healthComponent = target:FindFirstChild("HealthComponent")
-        if healthComponent then
-            healthComponent:Heal(amount, caster)
+        if healthComponent and (healthComponent :: any).Heal then
+            (healthComponent :: any):Heal(amount, caster)
         end
-        
+
         effect.data.healingDone = amount
     end
-    
+
     -- Shield effect
-    effectHandlers.Shield = function(self, effect, config, caster, target)
+    effectHandlers["Shield"] = function(self: EffectComposer, effect: ActiveEffect, config: EffectConfig, caster: Instance, target: Instance?)
         if not target then return end
-        
+
         local amount = self:_calculateValue(config.amount, effect.data.stats)
         local duration = config.duration or 10
-        
+
         local healthComponent = target:FindFirstChild("HealthComponent")
-        if healthComponent and healthComponent.AddShield then
-            local shieldId = healthComponent:AddShield(amount, duration, effect.id)
+        if healthComponent and (healthComponent :: any).AddShield then
+            local shieldId = (healthComponent :: any):AddShield(amount, duration, effect.id)
             effect.data.shieldId = shieldId
             effect.data.shieldAmount = amount
         end
     end
-    
+
     -- Stun effect
-    effectHandlers.Stun = function(self, effect, config, caster, target)
+    effectHandlers["Stun"] = function(self: EffectComposer, effect: ActiveEffect, config: EffectConfig, caster: Instance, target: Instance?)
         if not target then return end
-        
+
         local movementComponent = target:FindFirstChild("MovementComponent")
-        if movementComponent and movementComponent.SetStunned then
-            movementComponent:SetStunned(true, config.duration or 1)
-            
+        if movementComponent and (movementComponent :: any).SetStunned then
+            (movementComponent :: any):SetStunned(true, config.duration or 1)
+
             effect.onComplete = function()
-                if movementComponent and movementComponent.SetStunned then
-                    movementComponent:SetStunned(false)
+                if movementComponent and (movementComponent :: any).SetStunned then
+                    (movementComponent :: any):SetStunned(false, 0)
                 end
             end
         end
     end
-    
+
     -- Slow effect
-    effectHandlers.Slow = function(self, effect, config, caster, target)
+    effectHandlers["Slow"] = function(self: EffectComposer, effect: ActiveEffect, config: EffectConfig, caster: Instance, target: Instance?)
         if not target then return end
-        
-        local amount = config.amount or 0.5 -- 50% slow by default
-        
+
+        local amount = (config :: any).amount or 0.5 -- 50% slow by default
+
         local movementComponent = target:FindFirstChild("MovementComponent")
-        if movementComponent and movementComponent.ApplySpeedModifier then
-            local modifierId = movementComponent:ApplySpeedModifier(1 - amount, config.duration)
+        if movementComponent and (movementComponent :: any).ApplySpeedModifier then
+            local modifierId = (movementComponent :: any):ApplySpeedModifier(1 - amount, config.duration)
             effect.data.modifierId = modifierId
         end
     end
-    
+
     -- Knockback effect
-    effectHandlers.Knockback = function(self, effect, config, caster, target)
+    effectHandlers["Knockback"] = function(self: EffectComposer, effect: ActiveEffect, config: EffectConfig, caster: Instance, target: Instance?)
         if not target then return end
-        
-        local distance = config.distance or 20
-        local speed = config.speed or 50
-        local direction = self:_getDirection(config.direction, caster, target)
-        
+
+        local distance = (config :: any).distance or 20
+        local speed = (config :: any).speed or 50
+        local direction = self:_getDirection((config :: any).direction, caster, target)
+
         -- Server should only update physics/game state, not create visual effects
         -- The client will handle visual representation of knockback
         local character = target:IsA("Model") and target or target:FindFirstAncestorOfClass("Model")
@@ -324,33 +375,33 @@ function EffectComposer:_registerDefaultHandlers()
                 bodyVelocity.MaxForce = Vector3.new(4000, 4000, 4000)
                 bodyVelocity.Velocity = direction * speed
                 bodyVelocity.Parent = rootPart
-                
+
                 Debris:AddItem(bodyVelocity, distance / speed)
             end
         end
     end
-    
+
     -- Projectile effect
-    effectHandlers.Projectile = function(self, effect, config, caster, target)
+    effectHandlers["Projectile"] = function(self: EffectComposer, effect: ActiveEffect, config: EffectConfig, caster: Instance, target: Instance?)
         -- Server should not create visual projectiles
         -- Only handle hit detection and damage calculation
         -- Visual effects should be handled by client
-        
+
         -- Just calculate hit timing and trigger damage
         local casterPos = self:_getPosition(caster)
         local targetPos = target and self:_getPosition(target) or effect.data.targetPosition
-        
+
         if targetPos then
             local distance = (targetPos - casterPos).Magnitude
-            local speed = config.speed or 50
+            local speed = (config :: any).speed or 50
             local travelTime = distance / speed
-            
+
             -- Simulate projectile travel time then apply effects
             task.delay(travelTime, function()
                 -- Trigger on-hit effects
                 if config.effects then
                     for _, childConfig in ipairs(config.effects) do
-                        if childConfig.trigger == "OnHit" then
+                        if (childConfig :: any).trigger == "OnHit" then
                             self:executeEffect(childConfig, caster, target, effect.data)
                         end
                     end
@@ -358,105 +409,108 @@ function EffectComposer:_registerDefaultHandlers()
             end)
         end
     end
-    
+
     -- Area effect
-    effectHandlers.Area = function(self, effect, config, caster, target)
+    effectHandlers["Area"] = function(self: EffectComposer, effect: ActiveEffect, config: EffectConfig, caster: Instance, target: Instance?)
         local position = target and self:_getPosition(target) or effect.data.position
         if not position then return end
-        
-        local radius = config.radius or 10
-        local targets = self:_getTargetsInArea(position, radius, config.filter)
-        
+
+        local radius = ((config :: any).customData and (config :: any).customData.radius) or 10
+        local filter = (config :: any).customData and (config :: any).customData.filter
+        local targets = self:_getTargetsInArea(position, radius, filter)
+
         -- Apply child effects to all targets
         if config.effects then
-            for _, target in ipairs(targets) do
+            for _, areaTarget in ipairs(targets) do
                 for _, childConfig in ipairs(config.effects) do
-                    self:executeEffect(childConfig, caster, target, effect.data)
+                    self:executeEffect(childConfig, caster, areaTarget, effect.data)
                 end
             end
         end
-        
+
         effect.data.targetsHit = targets
     end
-    
+
     -- Dash effect
-    effectHandlers.Dash = function(self, effect, config, caster, target)
-        local distance = config.distance or 20
-        local speed = config.speed or 100
-        local direction = self:_getDirection(config.direction or "Forward", caster, target)
-        
+    effectHandlers["Dash"] = function(self: EffectComposer, effect: ActiveEffect, config: EffectConfig, caster: Instance, target: Instance?)
+        local distance = (config :: any).distance or 20
+        local speed = (config :: any).speed or 100
+        local direction = self:_getDirection((config :: any).direction or "Forward", caster, target)
+
         local character = caster:IsA("Model") and caster or caster:FindFirstAncestorOfClass("Model")
         if character then
             local rootPart = character:FindFirstChild("HumanoidRootPart")
-            if rootPart then
+            if rootPart and rootPart:IsA("BasePart") then
+                local basePart = rootPart :: BasePart
                 -- Disable movement during dash
                 local humanoid = character:FindFirstChild("Humanoid")
-                if humanoid then
-                    local oldWalkSpeed = humanoid.WalkSpeed
-                    humanoid.WalkSpeed = 0
-                    
+                if humanoid and humanoid:IsA("Humanoid") then
+                    local humanoidInstance = humanoid :: Humanoid
+                    local oldWalkSpeed = humanoidInstance.WalkSpeed
+                    humanoidInstance.WalkSpeed = 0
+
                     -- Apply physics-based movement only (no visuals)
                     local bodyPosition = Instance.new("BodyPosition")
                     bodyPosition.MaxForce = Vector3.new(4000, 0, 4000)
-                    bodyPosition.Position = rootPart.Position + direction * distance
-                    bodyPosition.Parent = rootPart
-                    
+                    bodyPosition.Position = basePart.Position + direction * distance
+                    bodyPosition.Parent = basePart
+
                     local dashTime = distance / speed
-                    
+
                     task.delay(dashTime, function()
                         if bodyPosition and bodyPosition.Parent then
                             bodyPosition:Destroy()
                         end
-                        if humanoid then
-                            humanoid.WalkSpeed = oldWalkSpeed
+                        if humanoidInstance then
+                            humanoidInstance.WalkSpeed = oldWalkSpeed
                         end
                     end)
-                    
-                    effect.data.dashStartPos = rootPart.Position
-                    effect.data.dashEndPos = rootPart.Position + direction * distance
+
+                    effect.data.dashStartPos = basePart.Position
+                    effect.data.dashEndPos = basePart.Position + direction * distance
                 end
             end
         end
     end
-    
+
     -- Channel effect
-    effectHandlers.Channel = function(self, effect, config, caster, target)
+    effectHandlers["Channel"] = function(self: EffectComposer, effect: ActiveEffect, config: EffectConfig, caster: Instance, target: Instance?)
         local channelTime = config.duration or 3
-        local onChannel = config.callbacks and config.callbacks.onChannel
-        
+        local onChannel = (config :: any).customData and (config :: any).customData.onChannel
+
         effect.data.channeling = true
         effect.data.channelProgress = 0
-        
+
         -- Update channel progress
         local startTime = os.clock()
         local connection
         connection = RunService.Heartbeat:Connect(function()
             local elapsed = os.clock() - startTime
             local progress = math.min(elapsed / channelTime, 1)
-            
+
             effect.data.channelProgress = progress
-            
+
             if onChannel then
                 onChannel(caster, progress)
             end
-            
+
             if progress >= 1 then
                 connection:Disconnect()
                 effect.data.channeling = false
-                
+
                 -- Trigger completion effects
                 if config.effects then
                     for _, childConfig in ipairs(config.effects) do
-                        if childConfig.trigger == "OnEnd" then
+                        if (childConfig :: any).trigger == "OnEnd" then
                             self:executeEffect(childConfig, caster, target, effect.data)
                         end
                     end
                 end
             end
         end)
-        
+
         effect.data.channelConnection = connection
-        
+
         effect.onComplete = function()
             if connection then
                 connection:Disconnect()
@@ -471,55 +525,55 @@ end
 
 function EffectComposer:_registerAdvancedHandlers()
     -- Buff/Debuff effects
-    effectHandlers.Buff = function(self, effect, config, caster, target)
+    effectHandlers["Buff"] = function(self: EffectComposer, effect: ActiveEffect, config: EffectConfig, caster: Instance, target: Instance?)
         if not target then return end
-        
+
         local modifierSystem = self:_getModifierSystem()
         if modifierSystem then
-            local modifier = config.customData and config.customData.modifier
+            local modifier = (config :: any).customData and (config :: any).customData.modifier
             if modifier then
-                modifierSystem:ApplyModifier(target, modifier, config.duration)
+                (modifierSystem :: any):ApplyModifier(target, modifier, config.duration)
                 effect.data.modifierId = modifier.id
             end
         end
     end
-    
-    effectHandlers.Debuff = effectHandlers.Buff -- Same logic, different data
-    
+
+    effectHandlers["Debuff"] = effectHandlers["Buff"] -- Same logic, different data
+
     -- Transform effect
-    effectHandlers.Transform = function(self, effect, config, caster, target)
+    effectHandlers["Transform"] = function(self: EffectComposer, effect: ActiveEffect, config: EffectConfig, caster: Instance, target: Instance?)
         if not target then return end
-        
-        local transformModel = config.customData and config.customData.model
+
+        local transformModel = (config :: any).customData and (config :: any).customData.model
         if transformModel then
             -- Store original appearance
             effect.data.originalAppearance = {}
-            
+
             -- Apply transformation
             -- Implementation depends on how characters are structured
         end
     end
-    
+
     -- Summon effect
-    effectHandlers.Summon = function(self, effect, config, caster, target)
-        local summonType = config.customData and config.customData.summonType
+    effectHandlers["Summon"] = function(self: EffectComposer, effect: ActiveEffect, config: EffectConfig, caster: Instance, target: Instance?)
+        local summonType = (config :: any).customData and (config :: any).customData.summonType
         local position = target and self:_getPosition(target) or effect.data.position
-        
+
         if summonType and position then
             -- Create summoned unit
             -- Implementation depends on entity system
-            
+
             effect.data.summonedUnit = nil -- placeholder
         end
     end
-    
+
     -- More advanced effects can be added here...
 end
 
 -- Helper methods
 
 function EffectComposer:_createActiveEffect(config: EffectConfig, caster: Instance, target: Instance?): ActiveEffect
-    return {
+    local effect = {
         id = HttpService:GenerateGUID(false),
         config = config,
         caster = caster,
@@ -534,7 +588,8 @@ function EffectComposer:_createActiveEffect(config: EffectConfig, caster: Instan
         parent = nil,
         onComplete = nil,
         onTick = nil
-    }
+    } :: any
+    return effect
 end
 
 function EffectComposer:_shouldTrigger(config: EffectConfig, caster: Instance, target: Instance?, context: {[string]: any}?): boolean
@@ -560,40 +615,46 @@ function EffectComposer:_calculateValue(value: number | ScalableValue | Types.Va
     if not value then
         return 0
     end
-    
+
     if type(value) == "number" then
         return value
     elseif type(value) == "table" then
-        if value.base then
+        -- Check if it's a ScalableValue (has base property)
+        if (value :: any).base then
             -- ScalableValue
-            local result = value.base
-            if value.scaling and stats then
-                for stat, multiplier in pairs(value.scaling) do
+            local scalableValue = value :: ScalableValue
+            local result = scalableValue.base
+            if scalableValue.scaling and stats then
+                for stat, multiplier in pairs(scalableValue.scaling) do
                     if stats[stat] then
                         result = result + stats[stat] * multiplier
                     end
                 end
             end
             return result
-        elseif value.min and value.max then
+        elseif (value :: any).min and (value :: any).max then
             -- ValueRange
-            return math.random(value.min, value.max)
+            local valueRange = value :: Types.ValueRange
+            return math.random(valueRange.min, valueRange.max)
         end
     end
-    
+
     return 0
 end
 
 function EffectComposer:_getPosition(instance: Instance): Vector3?
     if instance:IsA("BasePart") then
-        return instance.Position
+        local basePart = instance :: BasePart
+        return basePart.Position
     elseif instance:IsA("Model") then
-        local primaryPart = instance.PrimaryPart or instance:FindFirstChild("HumanoidRootPart")
-        if primaryPart then
+        local model = instance :: Model
+        local primaryPart = model.PrimaryPart or model:FindFirstChild("HumanoidRootPart")
+        if primaryPart and primaryPart:IsA("BasePart") then
             return primaryPart.Position
         end
     elseif instance:IsA("Humanoid") then
-        local rootPart = instance.RootPart
+        local humanoid = instance :: Humanoid
+        local rootPart = humanoid.RootPart
         if rootPart then
             return rootPart.Position
         end
@@ -606,7 +667,7 @@ function EffectComposer:_getDirection(directionType: string, caster: Instance, t
     if not casterPos then
         return Vector3.new(0, 0, 1)
     end
-    
+
     if directionType == "ToTarget" and target then
         local targetPos = self:_getPosition(target)
         if targetPos then
@@ -620,9 +681,11 @@ function EffectComposer:_getDirection(directionType: string, caster: Instance, t
     elseif directionType == "Backward" then
         -- Get look direction and reverse
         if caster:IsA("Model") then
-            local rootPart = caster:FindFirstChild("HumanoidRootPart")
-            if rootPart then
-                return -rootPart.CFrame.LookVector
+            local model = caster :: Model
+            local rootPart = model:FindFirstChild("HumanoidRootPart")
+            if rootPart and rootPart:IsA("BasePart") then
+                local basePart = rootPart :: BasePart
+                return -basePart.CFrame.LookVector
             end
         end
     elseif directionType == "Random" then
@@ -632,21 +695,23 @@ function EffectComposer:_getDirection(directionType: string, caster: Instance, t
             math.random() * 2 - 1
         ).Unit
     end
-    
+
     -- Default to forward
     if caster:IsA("Model") then
-        local rootPart = caster:FindFirstChild("HumanoidRootPart")
-        if rootPart then
-            return rootPart.CFrame.LookVector
+        local model = caster :: Model
+        local rootPart = model:FindFirstChild("HumanoidRootPart")
+        if rootPart and rootPart:IsA("BasePart") then
+            local basePart = rootPart :: BasePart
+            return basePart.CFrame.LookVector
         end
     end
-    
+
     return Vector3.new(0, 0, 1)
 end
 
 function EffectComposer:_getTargetsInArea(position: Vector3, radius: number, filter: Types.TargetFilter?): {Instance}
     local targets = {}
-    
+
     -- Find all characters in range
     for _, character in ipairs(workspace:GetDescendants()) do
         if character:IsA("Model") and character:FindFirstChild("Humanoid") then
@@ -658,7 +723,7 @@ function EffectComposer:_getTargetsInArea(position: Vector3, radius: number, fil
             end
         end
     end
-    
+
     return targets
 end
 
@@ -666,12 +731,12 @@ function EffectComposer:_passesFilter(target: Instance, filter: Types.TargetFilt
     if not filter then
         return true
     end
-    
+
     -- Check team
     if filter.team and filter.team ~= "All" then
         -- Implementation depends on team system
     end
-    
+
     -- Check type
     if filter.type and filter.type ~= "All" then
         if filter.type == "Player" then
@@ -684,19 +749,20 @@ function EffectComposer:_passesFilter(target: Instance, filter: Types.TargetFilt
             end
         end
     end
-    
+
     -- Check status
     if filter.status and filter.status ~= "All" then
         local humanoid = target:FindFirstChild("Humanoid")
-        if humanoid then
-            if filter.status == "Alive" and humanoid.Health <= 0 then
+        if humanoid and humanoid:IsA("Humanoid") then
+            local humanoidInstance = humanoid :: Humanoid
+            if filter.status == "Alive" and humanoidInstance.Health <= 0 then
                 return false
-            elseif filter.status == "Dead" and humanoid.Health > 0 then
+            elseif filter.status == "Dead" and humanoidInstance.Health > 0 then
                 return false
             end
         end
     end
-    
+
     -- Check custom filter
     if filter.custom then
         local success, result = pcall(filter.custom, target)
@@ -704,7 +770,7 @@ function EffectComposer:_passesFilter(target: Instance, filter: Types.TargetFilt
             return false
         end
     end
-    
+
     return true
 end
 
@@ -722,9 +788,9 @@ function EffectComposer:_trackEffect(effect: ActiveEffect)
         end
         table.insert(self.activeEffects[effect.target], effect)
     end
-    
+
     -- Track by type
-    local effectType = effect.config.type
+    local effectType = effect.config.type :: any
     if not self.effectsByType[effectType] then
         self.effectsByType[effectType] = {}
     end
@@ -739,16 +805,16 @@ function EffectComposer:_untrackEffect(effect: ActiveEffect)
             table.remove(self.activeEffects[effect.target], index)
         end
     end
-    
+
     -- Remove from type tracking
-    local effectType = effect.config.type
+    local effectType = effect.config.type :: any
     if self.effectsByType[effectType] then
         local index = table.find(self.effectsByType[effectType], effect)
         if index then
             table.remove(self.effectsByType[effectType], index)
         end
     end
-    
+
     -- Remove from periodic effects
     local index = table.find(self.periodicEffects, effect)
     if index then
@@ -758,51 +824,51 @@ end
 
 function EffectComposer:_returnToPool(effect: ActiveEffect)
     -- Object pooling for performance
-    local effectType = effect.config.type
-    
+    local effectType = effect.config.type :: any
+
     if not self.effectPools[effectType] then
         self.effectPools[effectType] = {}
     end
-    
+
     -- Clear effect data
     table.clear(effect.data)
     effect.children = nil
     effect.parent = nil
     effect.onComplete = nil
     effect.onTick = nil
-    
+
     -- Add to pool
     table.insert(self.effectPools[effectType], effect)
-    
+
     self.stats.pooledEffectCount = self.stats.pooledEffectCount + 1
 end
 
 function EffectComposer:_startUpdateLoop()
     RunService.Heartbeat:Connect(function(deltaTime)
         local now = os.clock()
-        
+
         -- Update periodic effects
         for i = #self.periodicEffects, 1, -1 do
             local effect = self.periodicEffects[i]
-            
-            if effect.lastTick and effect.tickRate then
-                local timeSinceLastTick = now - effect.lastTick
-                
-                if timeSinceLastTick >= effect.tickRate then
-                    effect.lastTick = now
-                    
+
+            if (effect :: any).lastTick and (effect :: any).tickRate then
+                local timeSinceLastTick = now - (effect :: any).lastTick
+
+                if timeSinceLastTick >= (effect :: any).tickRate then
+                    (effect :: any).lastTick = now
+
                     -- Execute periodic trigger effects
-                    if effect.config.effects then
-                        for _, childConfig in ipairs(effect.config.effects) do
-                            if childConfig.trigger == "Periodic" then
-                                self:executeEffect(childConfig, effect.caster, effect.target, effect.data)
+                    if (effect :: any).config.effects then
+                        for _, childConfig in ipairs((effect :: any).config.effects) do
+                            if (childConfig :: any).trigger == "Periodic" then
+                                self:executeEffect(childConfig, (effect :: any).caster, (effect :: any).target, (effect :: any).data)
                             end
                         end
                     end
-                    
+
                     -- Call tick callback
-                    if effect.onTick then
-                        effect.onTick(effect)
+                    if (effect :: any).onTick then
+                        (effect :: any).onTick(effect)
                     end
                 end
             end
@@ -823,7 +889,7 @@ function EffectComposer:getActiveEffects(target: Instance): {ActiveEffect}
     return self.activeEffects[target] or {}
 end
 
-function EffectComposer:getActiveEffectsByType(effectType: EffectType): {ActiveEffect}
+function EffectComposer:getActiveEffectsByType(effectType: string): {ActiveEffect}
     return self.effectsByType[effectType] or {}
 end
 

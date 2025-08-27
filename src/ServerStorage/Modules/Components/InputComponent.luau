@@ -130,59 +130,30 @@ function InputComponent:_ProcessCombatInputs(characterData: CharacterTypes.inter
         end
     end
     
-    -- Primary attack (M1)
+    -- Primary attack (M1) - Fully handled by scalable ability system
     local hasM1 = keys[OFFSET + Enum.UserInputType.MouseButton1.Value] == true
     if hasM1 then
-        -- Get player from characterData
+        -- All ability processing now handled by:
+        -- 1. ScalableAbilityHandler (client-side)
+        -- 2. AbilityCastHandler (server-side)
+        -- 3. AbilitySyncManager (synchronization)
+        -- No direct processing needed here anymore
+
+        -- Fallback to combat system for non-ability characters
         local player = characterData.Player or (characterData.PlayerId and game.Players:GetPlayerByUserId(characterData.PlayerId))
-        
-        if player and AbilityComponent then
-            -- Try to activate M1 ability
-            local abilityData = characterData.Components.Ability
-            if abilityData and abilityData.Loadout and abilityData.Loadout.primaryAttacks then
-                local m1AbilityId = abilityData.Loadout.primaryAttacks[1]
-                if m1AbilityId then
-                    -- Get target data from MouseComponent
-                    local targetData = nil
-                    if characterData.Components.Mouse then
-                        local mouseComponent = characterData.Components.Mouse
-                        targetData = {
-                            position = mouseComponent.MouseHitPosition,
-                            target = mouseComponent.MouseTarget,
-                            normal = mouseComponent.MouseHitNormal
-                        }
-                    end
-                    AbilityComponent:Activate(player, m1AbilityId, targetData)
-                end
-            end
-        elseif CombatComponent.PerformAttack then
+        if not player and CombatComponent.PerformAttack then
             CombatComponent.PerformAttack(characterData, Enums.AttackType.Default)
         end
     end
     
-    -- Secondary action (M2)
+    -- Secondary action (M2) - Now handled by AbilityCastHandler for better client-server sync
     local hasM2 = keys[OFFSET + Enum.UserInputType.MouseButton2.Value] == true
     local player = characterData.Player or (characterData.PlayerId and game.Players:GetPlayerByUserId(characterData.PlayerId))
-    
+
     if hasM2 and player and AbilityComponent then
-        -- Try to activate M2 ability  
-        local abilityData = characterData.Components.Ability
-        if abilityData and abilityData.Loadout and abilityData.Loadout.primaryAttacks then
-            local m2AbilityId = abilityData.Loadout.primaryAttacks[2]
-            if m2AbilityId then
-                -- Get target data from MouseComponent
-                local targetData = nil
-                if characterData.Components.Mouse then
-                    local mouseComponent = characterData.Components.Mouse
-                    targetData = {
-                        position = mouseComponent.MouseHitPosition,
-                        target = mouseComponent.MouseTarget,
-                        normal = mouseComponent.MouseHitNormal
-                    }
-                end
-                AbilityComponent:Activate(player, m2AbilityId, targetData)
-            end
-        end
+        -- Ability activation now handled by RequestAbilityCast network event
+        -- This prevents double activation and improves client-server synchronization
+        -- See: AbilityCastHandler.server.luau
     elseif CombatComponent.PerformBlock then
         CombatComponent.PerformBlock(characterData, hasM2)
     end
@@ -235,17 +206,9 @@ function InputComponent:_ProcessAbilityInputs(characterData: CharacterTypes.inte
         if down and not wasDown then
             local abilityId = activeIds[slot]
             if abilityId and AbilityComponent then
-                -- Get target data from MouseComponent
-                local targetData = nil
-                if characterData.Components.Mouse then
-                    local mouseComponent = characterData.Components.Mouse
-                    targetData = {
-                        position = mouseComponent.MouseHitPosition,
-                        target = mouseComponent.MouseTarget,
-                        normal = mouseComponent.MouseHitNormal
-                    }
-                end
-                AbilityComponent:Activate(player, abilityId, targetData)
+                -- Ability activation now handled by RequestAbilityCast network event
+                -- This prevents double activation and improves client-server synchronization
+                -- See: AbilityCastHandler.server.luau
             end
         end
         

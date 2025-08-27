@@ -1,10 +1,32 @@
 --!strict
 -- CharacterUpdateLoop - Ultra-fast character updates with frame budgeting
+-- HEAVILY OPTIMIZED FOR MAXIMUM PERFORMANCE
 local _Players = game:GetService("Players")
 
 local UpdateScheduler = require(game.ServerStorage.Modules.Systems.UpdateScheduler)
 local _FrameBudgetManager = require(game.ServerStorage.Modules.Systems.FrameBudgetManager)
 local CharacterTypes = require(game.ServerStorage.Modules.Types.CharacterTypes)
+
+-- PERFORMANCE OPTIMIZATIONS - Cache frequently used functions
+local mathMin = math.min
+local mathMax = math.max
+local mathFloor = math.floor
+local mathCeil = math.ceil
+local tableInsert = table.insert
+local tableClear = table.clear
+local tick = tick
+local time = time
+
+-- Spatial partitioning constants for distance-based optimization
+local SPATIAL_GRID_SIZE = 100 -- studs per grid cell
+local MAX_UPDATE_DISTANCE = 500 -- studs - characters beyond this update less frequently
+local HIGH_PRIORITY_DISTANCE = 100 -- studs - characters within this update every frame
+local MEDIUM_PRIORITY_DISTANCE = 250 -- studs - characters within this update every 2 frames
+local LOW_PRIORITY_DISTANCE = 500 -- studs - characters within this update every 4 frames
+
+-- Performance tracking
+local FRAME_TIME_SAMPLES = 30
+local TARGET_FRAME_TIME = 1/60 -- 60 FPS target
 
 type internalCharacter = CharacterTypes.internalCharacter
 
@@ -30,13 +52,13 @@ CharacterUpdateLoop.__index = CharacterUpdateLoop
 
 function CharacterUpdateLoop.new(interval: number?): ICharacterUpdateLoop
 	local self = setmetatable({}, CharacterUpdateLoop)
-	
+
 	self._interval = interval or 1/120 -- Store the interval
 	self._scheduler = UpdateScheduler.New(self._interval)
 	self._updateCallback = nil :: ((number) -> ())?
 	self._isRunning = false
 	self._connections = table.create(8) -- Pre-allocated connections array
-	
+
 	-- Performance tracking with pre-allocated structure
 	self._performanceMetrics = {
 		UpdateTime = 0,
@@ -46,15 +68,23 @@ function CharacterUpdateLoop.new(interval: number?): ICharacterUpdateLoop
 		AverageFrameTime = 0,
 		SkippedFrames = 0,
 	} :: PerformanceMetrics
-	
-	-- Ultra-fast batch processing state
+
+	-- OPTIMIZED: Ultra-fast batch processing with spatial partitioning
 	self._batchedUpdates = table.create(64) -- Pre-allocated batch array
 	self._updateBatchSize = 16 -- Process characters in batches
 	self._lastUpdateTime = 0
 	self._frameSkipThreshold = 16.67 -- Skip frames if falling behind (60fps = 16.67ms)
-	self._frameTimes = table.create(30) -- Rolling average of frame times
+	self._frameTimes = table.create(FRAME_TIME_SAMPLES) -- Rolling average of frame times
 	self._frameTimeIndex = 1
-	
+
+	-- OPTIMIZED: Spatial partitioning for distance-based updates
+	self._spatialGrid = {} :: {[string]: {any}} -- Grid-based spatial partitioning
+	self._highPriorityCharacters = table.create(32) -- Characters that need frequent updates
+	self._mediumPriorityCharacters = table.create(64) -- Characters that need moderate updates
+	self._lowPriorityCharacters = table.create(128) -- Characters that need infrequent updates
+	self._frameCounter = 0 -- For staggered updates
+	self._playerPositions = {} :: {[number]: Vector3} -- Cache player positions
+
 	return (self :: any) :: ICharacterUpdateLoop
 end
 
