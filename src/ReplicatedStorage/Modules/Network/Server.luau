@@ -86,29 +86,38 @@ local function Invoke()
     return Invocation
 end
 
+-- OPTIMIZED: More efficient buffer allocation with better growth strategy
 local function Allocate(Bytes: number)
     local InUse = (SendCursor + Bytes)
     if InUse > SendSize then
-        --> Avoid resizing the buffer for every write
-        while InUse > SendSize do
-            SendSize *= 1.5
+        -- OPTIMIZED: Use power-of-2 growth for better memory alignment
+        local newSize = SendSize
+        while InUse > newSize do
+            newSize = newSize * 2 -- Power of 2 growth instead of 1.5x
         end
 
-        local Buffer = buffer.create(SendSize)
-        buffer.copy(Buffer, 0, SendBuffer, 0, SendCursor)
-        SendBuffer = Buffer
+        -- OPTIMIZED: Only create new buffer if significantly larger
+        if newSize > SendSize * 1.25 then -- 25% threshold
+            local Buffer = buffer.create(newSize)
+            buffer.copy(Buffer, 0, SendBuffer, 0, SendCursor)
+            SendBuffer = Buffer
+            SendSize = newSize
+        end
     end
 
     SendOffset = SendCursor
     SendCursor += Bytes
-    
+
     return SendOffset
 end
 
+-- OPTIMIZED: Buffer-based queue for better performance
 local function CreateQueue(): Queue
     return {
         head = nil,
-        tail = nil
+        tail = nil,
+        _bufferPool = {}, -- Pool of reusable buffers
+        _poolSize = 0,
     }
 end
 
@@ -119,7 +128,29 @@ local function Pop(queue: Queue): any
     end
 
     queue.head = head.next
+
+    -- Return buffer to pool if it's a buffer value
+    if typeof(head.value) == "buffer" and queue._poolSize < 16 then
+        queue._bufferPool[queue._poolSize + 1] = head.value
+        queue._poolSize += 1
+    end
+
     return head.value
+end
+
+-- OPTIMIZED: Get pooled buffer for queue operations
+local function GetPooledBuffer(queue: Queue, size: number): buffer
+    if queue._poolSize > 0 then
+        local buf = queue._bufferPool[queue._poolSize]
+        queue._bufferPool[queue._poolSize] = nil
+        queue._poolSize -= 1
+
+        if buffer.len(buf) >= size then
+            return buf
+        end
+    end
+
+    return buffer.create(size)
 end
 
 local function Push(queue: Queue, value: any)
