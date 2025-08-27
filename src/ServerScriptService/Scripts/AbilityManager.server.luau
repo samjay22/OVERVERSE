@@ -1,8 +1,11 @@
 local Players = game:GetService("Players")
 local ServerStorage = game:GetService("ServerStorage")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local CharacterTypes = require(ServerStorage.Modules.Types.CharacterTypes)
 local AbilityComponent = require(game.ServerStorage.Modules.Components.AbilityComponent)
 local AbilityInputHandler = require(game.ServerStorage.Modules.Handlers.AbilityInputHandler)
+local NetworkServer = require(ReplicatedStorage.Modules.Network.Server)
+local CharacterManager = require(ServerStorage.Modules.Entities.Character.CharacterManager)
 
 AbilityInputHandler.onAbilityActivated = function(inputType, abilityName, characterData)
     -- characterData is a table containing { loadout, keyBindings, character, name }
@@ -57,3 +60,44 @@ AbilityInputHandler.onAbilityActivated = function(inputType, abilityName, charac
         warn("Could not find player for ability activation - PlayerId:", character.PlayerId)
     end
 end
+
+-- Initialize the input handler
+AbilityInputHandler.initialize()
+
+-- ===============================
+-- NETWORK PING COMPENSATION SYSTEM
+-- ===============================
+
+-- Handle client ability cast requests with network latency compensation
+NetworkServer.RequestAbilityCast.On(function(player: Player, data: { AbilityId: number, Target: Model?, Position: Vector3 })
+    local characterData = CharacterManager:GetCharacterData(player)
+    if not characterData then
+        warn(`[AbilityManager] No character data found for player {player.Name}`)
+        return
+    end
+
+    -- Get network ping for latency compensation
+    local networkPing = player:GetNetworkPing()
+    local clientTimestamp = tick()
+
+    -- Convert AbilityId to ability name (assuming numeric IDs map to ability names)
+    local abilityName = tostring(data.AbilityId) -- You may need to implement proper ID->name mapping
+
+    -- Prepare target data with network compensation
+    local targetData = {
+        position = data.Position,
+        target = data.Target,
+        networkPing = networkPing,
+        clientTimestamp = clientTimestamp,
+        serverTimestamp = tick()
+    }
+
+    -- Execute ability with network-aware timing
+    local success = AbilityComponent.Activate(player, abilityName, targetData)
+
+    if success then
+        print(`[AbilityManager] Successfully processed ability cast: {abilityName} for {player.Name} (ping: {math.floor(networkPing * 1000)}ms)`)
+    else
+        warn(`[AbilityManager] Failed to process ability cast: {abilityName} for {player.Name}`)
+    end
+end)

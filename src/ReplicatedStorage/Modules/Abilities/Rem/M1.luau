@@ -620,16 +620,21 @@ local Ability: Types.AbilityModule = {
             PlayerStateMachines = {} :: {[number]: AbilityStateMachine.AbilityStateMachine},
         },
 
-        Validate = function(self, player, onHit, x)
+        Validate = function(self, player, onHit, x, targetData)
             local internalTypes = require(game.ServerStorage.Modules.Types.CharacterTypes)
             local characterData : internalTypes.internalCharacter = x
 
             local playerId = player.UserId
             local currentTime = tick()
-            
-            -- Get target position from characterData's MouseComponent
+
+            -- Get network ping for latency compensation
+            local networkPing = player:GetNetworkPing()
+
+            -- Get target position from targetData (passed from network request) or MouseComponent
             local targetPosition: Vector3? = nil
-            if characterData.Components.Mouse then
+            if targetData and targetData.position then
+                targetPosition = targetData.position
+            elseif characterData.Components.Mouse then
                 local mouseComp = characterData.Components.Mouse
                 if mouseComp.IsValid then
                     targetPosition = mouseComp.MouseHitPosition
@@ -675,13 +680,26 @@ local Ability: Types.AbilityModule = {
             warn(`Server M1 - Seq: {sequence}, Burst: {burst-1}/{Config.BurstAmount}, Ammo: {ammo-1}/{Config.Ammo}`)
         
             local entityPosition : Vector3 = characterData.Components.Movement.Position
+
+            -- Calculate travel time with network ping compensation
+            local distance = targetPosition and (targetPosition - entityPosition).Magnitude or Config.Range
+            local travelTime = distance / PROJECTILE_SPEED
+
+            -- Apply network ping compensation: reduce delay by half the ping time
+            -- This accounts for the time it took the client's input to reach the server
+            local compensatedTravelTime = math.max(0, travelTime - (networkPing * 0.5))
+
             -- Perform raycast from entity position to target position
-            if targetPosition then                
+            if targetPosition then
                 local currentTarget = characterData.Components.Mouse.MouseTarget
                 if currentTarget then
-                    task.delay(TRAVEL_TIME, function()
+                    -- Use compensated travel time for more accurate hit timing
+                    task.delay(compensatedTravelTime, function()
                         onHit(currentTarget)
                     end)
+
+                    -- Debug logging for network compensation
+                    print(`[M1] Network compensation - Ping: {math.floor(networkPing * 1000)}ms, Original delay: {math.floor(travelTime * 1000)}ms, Compensated: {math.floor(compensatedTravelTime * 1000)}ms`)
                 end
             else
                 -- Fallback to using character's look direction if no target position
@@ -692,10 +710,17 @@ local Ability: Types.AbilityModule = {
                     if player.Character then
                         raycastParams.FilterDescendantsInstances = {player.Character}
                     end
-                    
+
                     local raycastResult = workspace:Raycast(entityPosition, direction * Config.Range, raycastParams)
                     if raycastResult and raycastResult.Instance.Parent:FindFirstChild("Humanoid") then
-                        onHit(raycastResult.Instance.Parent)
+                        -- Apply network compensation for fallback raycast too
+                        local fallbackDistance = (raycastResult.Position - entityPosition).Magnitude
+                        local fallbackTravelTime = fallbackDistance / PROJECTILE_SPEED
+                        local compensatedFallbackTime = math.max(0, fallbackTravelTime - (networkPing * 0.5))
+
+                        task.delay(compensatedFallbackTime, function()
+                            onHit(raycastResult.Instance.Parent)
+                        end)
                     end
                 end
             end

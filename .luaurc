@@ -103,6 +103,8 @@
 		"BufferAbilitySerializer": "./src/ServerStorage/Modules/Systems/BufferAbilitySerializer.luau",
 		"BufferCharacterSync": "./src/ServerStorage/Modules/Systems/BufferCharacterSync.luau",
 		"TargetingSystem": "./src/ServerStorage/Modules/Core/AbilitySystem/TargetingSystem.luau",
-		"ClientController": "./src/StarterPlayerScripts/ClientController.client.luau"
+		"ClientController": "./src/StarterPlayerScripts/ClientController.client.luau",
+		"NetworkAbilityCaster": "./src/StarterPlayerScripts/NetworkAbilityCaster.client.luau",
+		"NetworkPingDisplay": "./src/StarterPlayerScripts/NetworkPingDisplay.client.luau"
 	}
 }

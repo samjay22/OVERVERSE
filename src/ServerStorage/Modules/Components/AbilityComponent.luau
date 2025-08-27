@@ -764,7 +764,12 @@ function AbilityComponent:_ExecuteAbility(characterData: CharacterTypes.internal
     
     -- Handle different ability types
     if definition.type == "Instant" then
-        self:_ExecuteInstantAbility(definition, owner, targets, context)
+        -- Check if this is a legacy ability
+        if self:_HasTag(definition, "Legacy") and definition._legacyModule then
+            self:_ExecuteLegacyAbility(characterData, definition, targetData)
+        else
+            self:_ExecuteInstantAbility(definition, owner, targets, context)
+        end
     elseif definition.type == "Channeled" then
         self:_ExecuteChanneledAbility(characterData, definition, owner, targets, context)
     elseif definition.type == "Toggle" then
@@ -952,6 +957,66 @@ function AbilityComponent:_ExecuteChargedAbility(characterData: CharacterTypes.i
     -- This would implement charge-up mechanics
     -- For now, treat as instant
     self:_ExecuteInstantAbility(definition, caster, {}, context)
+end
+
+function AbilityComponent:_ExecuteLegacyAbility(characterData: CharacterTypes.internalCharacter, definition: AbilityDefinition, targetData: any?)
+    -- Handle legacy ability modules (like M1) that use Server.Validate pattern
+    local legacyModule = definition._legacyModule
+    local legacyData = definition._legacyData
+
+    if not legacyModule or not legacyData then
+        warn(`[AbilityComponent] Legacy ability {definition.id} missing module or data`)
+        return
+    end
+
+    -- Get player from character data
+    local player = characterData.Entity and characterData.Entity.player
+    if not player then
+        warn(`[AbilityComponent] No player found for legacy ability {definition.id}`)
+        return
+    end
+
+    -- Check if the legacy module has a Server.Validate function
+    if legacyData.Server and legacyData.Server.Validate then
+        -- Create onHit callback for damage application
+        local onHit = function(target: Model?)
+            if not target then return end
+
+            -- Apply damage using the combat system
+            local targetCharacterData = self:_GetCharacterDataFromModel(target)
+            if targetCharacterData then
+                local combatComponent = targetCharacterData.Components.Combat
+                if combatComponent and combatComponent.Service then
+                    -- Get damage from definition or legacy config
+                    local damage = 10 -- Default damage
+                    if definition._legacyData and definition._legacyData.Config and definition._legacyData.Config.Damage then
+                        damage = definition._legacyData.Config.Damage
+                    elseif #definition.effects > 0 then
+                        for _, effect in ipairs(definition.effects) do
+                            if effect.type == "Damage" and effect.amount then
+                                damage = effect.amount.base or effect.amount
+                                break
+                            end
+                        end
+                    end
+
+                    combatComponent.Service:ApplyDamage(characterData, targetCharacterData, damage, true)
+                    print(`[AbilityComponent] Legacy ability {definition.id} dealt {damage} damage to {target.Name}`)
+                end
+            end
+        end
+
+        -- Call the legacy Server.Validate function with network-aware targetData
+        local success = pcall(function()
+            legacyData.Server:Validate(player, onHit, characterData, targetData)
+        end)
+
+        if not success then
+            warn(`[AbilityComponent] Failed to execute legacy ability {definition.id}`)
+        end
+    else
+        warn(`[AbilityComponent] Legacy ability {definition.id} missing Server.Validate function`)
+    end
 end
 
 function AbilityComponent:_InterruptAbility(characterData: CharacterTypes.internalCharacter, instance: AbilityInstance, source: Instance?)
@@ -1615,6 +1680,17 @@ end
 function AbilityComponent:_GetCharacterData(player: Player): CharacterTypes.internalCharacter?
     local CharacterManager = require(game.ServerStorage.Modules.Entities.Character.CharacterManager)
     return CharacterManager:GetCharacterData(player) :: any
+end
+
+function AbilityComponent:_GetCharacterDataFromModel(model: Model): CharacterTypes.internalCharacter?
+    -- Try to find player from the model
+    local player = game.Players:GetPlayerFromCharacter(model)
+    if player then
+        return self:_GetCharacterData(player)
+    end
+
+    -- If no player found, this might be an NPC - would need NPC character system
+    return nil
 end
 
 -- Create singleton instance
