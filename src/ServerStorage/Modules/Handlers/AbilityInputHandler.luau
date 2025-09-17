@@ -102,13 +102,6 @@ function AbilityInputHandler.processCharacter(character)
     local characterData = getCharacterData(character)
     if not characterData then return end
     
-    -- Debug: Show active keys that are pressed
-    for key, value in pairs(activeKeys) do
-        if value then
-            print(`[AbilityInputHandler] Active key: {key} = {value}`)
-        end
-    end
-    
     -- Get or create tracking data for this character
     if not trackedCharacters[character] then
         trackedCharacters[character] = {
@@ -166,14 +159,8 @@ function AbilityInputHandler.processCharacter(character)
                     local isPressed = activeKeys[numCode]
                     local wasPressed = tracking.lastKeys[numCode]
                     
-                    -- Debug output
-                    if isPressed ~= wasPressed then
-                        print(`[AbilityInputHandler] Key {numCode} transition: {wasPressed} -> {isPressed} for slot {slot}`)
-                    end
-                    
                     -- Only trigger on key press transition (not pressed -> pressed)
                     if isPressed and not wasPressed and ability then
-                        print(`[AbilityInputHandler] Activating ability: {ability} for slot {slot}`)
                         activateAbility("Slot" .. slot .. "(" .. SLOT_KEYS[slot] .. ")", ability, characterData)
                         break
                     end

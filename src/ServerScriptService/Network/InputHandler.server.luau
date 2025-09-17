@@ -13,8 +13,14 @@ local AllowedInput = {
     [Enum.UserInputType.Keyboard.Name] = Enum.UserInputType.Keyboard,
 }
 
+-- Create a lookup table for KeyCodes
+local AllowedKeyCodes = {}
+for _, keyCode in pairs(Enum.KeyCode:GetEnumItems()) do
+    AllowedKeyCodes[keyCode.Name] = keyCode
+end
+
 _NetworkServer.ClientInputEvent.On(function(player, data)
-    local validKeycode = AllowedInput[data.KeyCode]  or AllowedInput[data.UserInputType] 
+    local validKeycode = AllowedInput[data.UserInputType] or AllowedKeyCodes[data.KeyCode]
     if not validKeycode then
         return
     end
@@ -31,7 +37,8 @@ _NetworkServer.ClientInputEvent.On(function(player, data)
 
     local characterEntity = _CharacterManager:GetCharacterData(player)
     if not characterEntity then
-        return warn("Character data not found")
+        warn("Character data not found")
+        return
     end
 
     _CharacterManager:UpdateInputState(characterEntity, validKeycode, data.IsPressed)
