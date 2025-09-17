@@ -29,7 +29,7 @@ end)
            -- Example: Spawn character with a passive ability in their loadout
            local exampleLoadout = {
                primaryAttacks = { "Rem_M1" },
-               actives = { "Dash" }, -- Active ability in slot 1
+               actives = { "Shift" }, -- Active ability in slot 1
                passive = "Keen",     -- Keen passive for critical hit bonuses
                animationPack = "Rem"
            }

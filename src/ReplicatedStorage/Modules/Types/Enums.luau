@@ -2,7 +2,7 @@
 -- Strongly-typed enums and constants
 
 -- Ability system
-export type AbilityId = "Dash" | "Keen" | "Heal" | "Block" | "Parry" | "Charge" | "Slam" | "Thrust" | "RemM1" | "RemM2"
+export type AbilityId = "Dash" | "Keen" | "Heal" | "Block" | "Parry" | "Charge" | "Slam" | "Thrust" | "RemM1" | "RemM2" | "RemShift"
 export type AbilityType = "Active" | "Passive" | "Toggle"
 export type AbilityTarget = "Self" | "Target" | "Area" | "None"
 export type AbilityCategory = "Primary" | "Active" | "Passive" | "Secondary" | "Ultimate"
@@ -18,6 +18,7 @@ local AbilityId = {
 	Thrust = "Thrust" :: AbilityId,
 	RemM1 = "RemM1" :: AbilityId,
 	RemM2 = "RemM2" :: AbilityId,
+	RemShift = "RemShift" :: AbilityId,
 } :: {[string]: AbilityId}
 
 local AbilityType = {

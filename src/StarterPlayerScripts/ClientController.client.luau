@@ -211,6 +211,8 @@ end
 -- Input Processing Functions
 local function processInputBegan(input: InputObject, gameProcessed: boolean)
     if gameProcessed then return end
+
+    warn("input")
     
     local inputKey: InputKey = if input.KeyCode ~= Enum.KeyCode.Unknown 
         then input.KeyCode 

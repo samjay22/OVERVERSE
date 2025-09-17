@@ -38,8 +38,19 @@ end
 
 print(string.format("Component System Initialized: %d/%d components loaded", loadedCount, #components))
 
+-- Initialize Ability System
+local abilitySuccess, abilityErr = pcall(function()
+    -- Load ability definitions
+    local _AbilityDefinitions = require(game.ServerStorage.AbilityDefinitions)
+    print("✓ Ability definitions loaded")
+end)
+
+if not abilitySuccess then
+    warn("Failed to load ability definitions:", abilityErr)
+end
+
 -- Initialize AbilityInputHandler
-local success, err = pcall(function()
+local handlerSuccess, handlerErr = pcall(function()
     local AbilityInputHandler = require(game.ServerStorage.Modules.Handlers.AbilityInputHandler)
     if AbilityInputHandler.initialize then
         AbilityInputHandler.initialize()
@@ -47,6 +58,6 @@ local success, err = pcall(function()
     end
 end)
 
-if not success then
-    warn("Failed to initialize AbilityInputHandler:", err)
+if not handlerSuccess then
+    warn("Failed to initialize AbilityInputHandler:", handlerErr)
 end

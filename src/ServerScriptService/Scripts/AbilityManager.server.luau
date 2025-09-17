@@ -11,6 +11,8 @@ AbilityInputHandler.onAbilityActivated = function(inputType, abilityName, charac
     -- characterData is a table containing { loadout, keyBindings, character, name }
     local character = characterData.character
     
+    warn("Ability activated: ", abilityName, "for", characterData.name)
+    
     if not character then
         warn("No character in characterData for ability activation")
         return

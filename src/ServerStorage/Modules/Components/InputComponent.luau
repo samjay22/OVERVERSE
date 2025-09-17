@@ -40,13 +40,23 @@ local InputComponent = BaseComponent:extend("Input") :: any
 function InputComponent:Initialize(characterData: CharacterTypes.internalCharacter, config: any?)
     BaseComponent.Initialize(self, characterData, config)
     
+    -- Create default key bindings structure
+    local defaultKeyBindings = {
+        Slots = {
+            [1] = { numeric = DEFAULT_SLOT_BINDINGS[1] }, -- Q, 1
+            [2] = { numeric = DEFAULT_SLOT_BINDINGS[2] }, -- E, 2  
+            [3] = { numeric = DEFAULT_SLOT_BINDINGS[3] }, -- R, 3
+            [4] = { numeric = DEFAULT_SLOT_BINDINGS[4] }, -- F, 4
+        }
+    }
+    
     local componentData: InputComponentData = {
         ActiveKeys = {},
         PreviousKeys = {},
         InputBuffer = {},
         LastInputTime = tick(),
         InputEnabled = true,
-        KeyBindings = config and config.KeyBindings or {},
+        KeyBindings = config and config.KeyBindings or defaultKeyBindings,
         PrevSlotDown = {},
     }
     
@@ -185,6 +195,9 @@ function InputComponent:_ProcessAbilityInputs(characterData: CharacterTypes.inte
         return
     end
     
+    -- Debug: Log when we're processing ability inputs
+    print(`[InputComponent] Processing ability inputs for player, found {#activeIds} active abilities`)
+    
     local component = characterData.Components.Input :: InputComponentData
     local prev = component.PrevSlotDown
     
@@ -198,6 +211,7 @@ function InputComponent:_ProcessAbilityInputs(characterData: CharacterTypes.inte
         for _, code in ipairs(codes) do
             if keys[code] == true then
                 down = true
+                print(`[InputComponent] Slot {slot} key detected (code: {code})`)
                 break
             end
         end
@@ -205,10 +219,17 @@ function InputComponent:_ProcessAbilityInputs(characterData: CharacterTypes.inte
         local wasDown = prev[slot] == true
         if down and not wasDown then
             local abilityId = activeIds[slot]
+            print(`[InputComponent] Slot {slot} pressed! AbilityId: {abilityId or "nil"}`)
             if abilityId and AbilityComponent then
-                -- Ability activation now handled by RequestAbilityCast network event
-                -- This prevents double activation and improves client-server synchronization
-                -- See: AbilityCastHandler.server.luau
+                -- Re-enable direct ability activation for immediate response
+                -- Note: This works alongside RequestAbilityCast for different input sources
+                print(`[InputComponent] Activating ability via input: {abilityId} (slot {slot})`)
+                local success = AbilityComponent.Activate(AbilityComponent, player, abilityId, nil)
+                if not success then
+                    warn(`[InputComponent] Failed to activate ability: {abilityId}`)
+                else
+                    print(`[InputComponent] Successfully activated ability: {abilityId}`)
+                end
             end
         end
         

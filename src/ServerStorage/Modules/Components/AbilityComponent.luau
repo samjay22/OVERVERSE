@@ -263,12 +263,22 @@ function AbilityComponent:Activate(player: Player, abilityId: string, targetData
     -- Get ability instance
     local instance = component.AbilityInstances[abilityId]
     if not instance then
+        print(`[AbilityComponent] Ability instance not found for '{abilityId}', attempting to create...`)
         -- Try to create instance if ability exists in registry
         instance = self:_CreateAbilityInstance(characterData, abilityId)
         if not instance then
             warn(`[AbilityComponent] Ability not found: {abilityId}`)
+            local availableAbilities = {}
+            for id, _ in pairs(component.AbilityInstances) do
+                table.insert(availableAbilities, id)
+            end
+            print(`[AbilityComponent] Available instances: {table.concat(availableAbilities, ", ")}`)
             return false
+        else
+            print(`[AbilityComponent] Successfully created ability instance for '{abilityId}'`)
         end
+    else
+        print(`[AbilityComponent] Found existing ability instance for '{abilityId}'`)
     end
     
     -- Check if can cast
@@ -465,8 +475,11 @@ function AbilityComponent:_CreateAbilityInstance(characterData: CharacterTypes.i
         definition = registry:getDefinition(legacyId)
         
         if not definition then
+            print(`[AbilityComponent] WARNING: Could not find ability definition for '{abilityId}' or '{legacyId}'`)
             return nil
         end
+    else
+        print(`[AbilityComponent] Found ability definition for '{abilityId}'`)
     end
     
     -- Initialize resources for abilities that use them (only if they don't exist)

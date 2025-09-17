@@ -8,7 +8,7 @@ return {
     assetKey = "Rem",
     loadout = {
         primaryAttacks = {"Rem_M1"}, -- Using new ability IDs
-        actives = {"Rem_E", "Rem_F"}, -- E, F slots (Q and R not implemented yet)
+        actives = {"Rem_Shift", "Rem_E", "Rem_F"}, -- Q (Shift), E, F slots 
         passive = "Rem_Passive",
         animationPack = "Rem",
     }
